@@ -1,0 +1,11 @@
+build/
+build-*/
+_deps/
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+CMakeUserPresets.json
+.cache/
+dist-release/
+build-release/
