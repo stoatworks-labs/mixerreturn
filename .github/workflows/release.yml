@@ -1,0 +1,224 @@
+name: release
+
+# Build the MixerReturn plugin (VST3 + AU + Standalone) for Windows, macOS and
+# Linux (x64 + arm64). Plugins ship as zips (drop the bundle into your plugin
+# folder); Linux jobs also emit best-effort .deb/.rpm that install the VST3.
+# Trigger manually (Actions > release > Run workflow) or by pushing a v* tag.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64,    os: ubuntu-latest,    cmake_arch: '',        pkgarch: amd64 }
+          - { name: linux-aarch64,   os: ubuntu-24.04-arm, cmake_arch: '',        pkgarch: arm64 }
+          - { name: windows-x86_64,  os: windows-latest,   cmake_arch: '-A x64'   }
+          - { name: windows-aarch64, os: windows-11-arm,   cmake_arch: '-A ARM64' }
+          # One universal macOS build rather than two single-arch ones. A host
+          # loads whichever slice matches its own process, so a universal
+          # bundle is the only shape that works in both Intel and Apple
+          # Silicon DAWs without the user having to pick.
+          # The inner quotes are load-bearing: this string is pasted into a
+          # shell command, and an unquoted ';' separates commands rather than
+          # CMake list items.
+          - { name: macos-universal, os: macos-14,         cmake_arch: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux audio/GUI dev deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libjack-jackd2-dev libx11-dev libxcomposite-dev \
+            libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev \
+            libxrender-dev libfreetype6-dev libfontconfig1-dev \
+            libglu1-mesa-dev libgtk-3-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_arch }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Derive version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.1.0-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Collect plugin bundles
+        shell: bash
+        run: |
+          mkdir -p out
+          art="build/MixerReturn_artefacts/Release"
+          # Copy whatever formats this platform produced (VST3 all, AU mac, Standalone all)
+          for fmt in VST3 AU Standalone; do
+            if [ -d "$art/$fmt" ]; then cp -R "$art/$fmt" "out/$fmt"; fi
+          done
+          ls -R out | head -40
+
+      - name: Archive (zip)
+        shell: bash
+        run: |
+          cd out
+          if command -v 7z >/dev/null 2>&1; then
+            7z a "../mixerreturn-${{ matrix.name }}.zip" ./*
+          else
+            zip -r "../mixerreturn-${{ matrix.name }}.zip" ./*
+          fi
+
+      - name: Installers (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        # A plugin does not install to one place, so the .pkg is multi-part:
+        # VST3 to /Library/Audio/Plug-Ins/VST3, AU to .../Components and the
+        # standalone to /Applications. The .dmg carries all three for anyone
+        # who would rather drag them.
+        #
+        # Ad-hoc signing is required, not cosmetic: an unsigned bundle is
+        # rejected by the host's plugin scan on Apple Silicon.
+        run: |
+          source scripts/release-lib.sh
+          version="${{ steps.ver.outputs.version }}"
+          rl_init "MixerReturn" mixerreturn "$version" com.stoatworks.mixerreturn "$GITHUB_WORKSPACE"
+
+          art="build/MixerReturn_artefacts/Release"
+          vst3="$art/VST3/MixerReturn.vst3"
+          au="$art/AU/MixerReturn.component"
+          app="$art/Standalone/MixerReturn.app"
+
+          # Assert the universal slice rather than trusting the build log — a
+          # single-arch bundle compiles and reports success just the same.
+          for b in "$vst3" "$au" "$app"; do
+            [ -d "$b" ] || continue
+            bin="$b/Contents/MacOS/MixerReturn"
+            [ -f "$bin" ] || continue
+            archs="$(lipo -archs "$bin")"
+            echo "$(basename "$b"): $archs"
+            case "$archs" in *arm64*x86_64*|*x86_64*arm64*) ;; *)
+              echo "expected universal, got: $archs" >&2; exit 1 ;;
+            esac
+            rl_adhoc_sign "$b"
+          done
+
+          stage="$RUNNER_TEMP/stage-mac"
+          rm -rf "$stage"; mkdir -p "$stage"
+          [ -d "$vst3" ] && cp -R "$vst3" "$stage/"
+          [ -d "$au" ]   && cp -R "$au"   "$stage/"
+          [ -d "$app" ]  && cp -R "$app"  "$stage/"
+          cp README.md LICENSE "$stage/" 2>/dev/null || true
+          rl_dmg "${{ matrix.name }}" "$stage"
+          rl_pkg_multi "${{ matrix.name }}" \
+            "$vst3:/Library/Audio/Plug-Ins/VST3" \
+            "$au:/Library/Audio/Plug-Ins/Components" \
+            "$app:/Applications"
+
+      - name: Package .deb/.rpm (Linux, best-effort)
+        if: startsWith(matrix.os, 'ubuntu')
+        shell: bash
+        env:
+          PKGARCH: ${{ matrix.pkgarch }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        continue-on-error: true
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.1
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          cat > nfpm.yaml <<EOF
+          name: mixerreturn
+          arch: ${PKGARCH}
+          version: "${VERSION}"
+          maintainer: "Stoatworks Labs"
+          description: |
+            Shared summing bus for Waves SuperRack Performer — automix the
+            direct outs and return one stereo pair to a group's External Input.
+          license: MIT
+          contents:
+            - src: ./out/VST3/MixerReturn.vst3
+              dst: /usr/lib/vst3/MixerReturn.vst3
+          EOF
+          nfpm package -p deb -t . || true
+          nfpm package -p rpm -t . || true
+          ls -l *.deb *.rpm 2>/dev/null || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mixerreturn-${{ matrix.name }}
+          path: |
+            *.zip
+            *.dmg
+            *.pkg
+            *.deb
+            *.rpm
+          if-no-files-found: error
+
+  windows-installer:
+    name: Windows installer
+    needs: build
+    runs-on: ubuntu-latest
+    # makensis cross-compiles, so the installers are wrapped here from the zips
+    # the Windows jobs uploaded. A plugin has no executable to shortcut, so the
+    # installer is --cli: it drops the VST3 into the common VST3 folder.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+
+      - name: Build installers
+        shell: bash
+        run: |
+          source scripts/release-lib.sh
+          version="${GITHUB_REF_NAME#v}"
+          case "$version" in [0-9]*) ;; *) version="0.0.0" ;; esac
+          rl_init "MixerReturn" mixerreturn "$version" com.stoatworks.mixerreturn "$PWD/installers"
+          for arch in x86_64 aarch64; do
+            zip="$(find artifacts -name "mixerreturn-windows-${arch}.zip" | head -1)"
+            [ -z "$zip" ] && { echo "no windows-${arch} artefact, skipping"; continue; }
+            stage="$RUNNER_TEMP/stage-win-$arch"
+            rm -rf "$stage"; mkdir -p "$stage"
+            unzip -q "$zip" -d "$stage"
+            cp README.md LICENSE "$stage/" 2>/dev/null || true
+            rl_nsis "windows-${arch}" "$stage" --cli
+          done
+          ls -l installers 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mixerreturn-windows-installers
+          path: installers/*
+          if-no-files-found: warn
+
+  release:
+    name: Publish release
+    needs: [build, windows-installer]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
