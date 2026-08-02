@@ -7,7 +7,51 @@ namespace
 void styleTrim (juce::Slider& s)
 {
     s.setSliderStyle (juce::Slider::LinearHorizontal);
-    s.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 20);
+    s.setTextBoxStyle (juce::Slider::TextBoxRight, false, 68, 20);
+
+    // The default track colours sit too close to the panel background to read as a groove
+    // with a filled portion, which makes the travelled part of the range invisible.
+    s.setColour (juce::Slider::backgroundColourId, juce::Colour (0xff0e1116));
+    s.setColour (juce::Slider::trackColourId, juce::Colour (0xff4fc3f7).withAlpha (0.55f));
+    s.setColour (juce::Slider::thumbColourId, juce::Colour (0xff4fc3f7));
+}
+
+// One layout table, so paint() and resized() cannot drift apart.
+constexpr int margin      = 16;
+constexpr int titleH      = 30;
+constexpr int comboH      = 26;
+constexpr int headingH    = 22;
+constexpr int rowH        = 24;
+constexpr int meterH      = 10;
+constexpr int gap         = 6;
+constexpr int trimLabelW  = 38;
+
+struct Layout
+{
+    int busY, sendHeadingY, sendRowY, sendTrimY, sendMeterY;
+    int outHeadingY, outComboY, outTrimY, outMeterY, statusY, totalHeight;
+
+    Layout()
+    {
+        int y = margin + titleH;
+        busY         = y;                    y += comboH + gap * 2;
+        sendHeadingY = y;                    y += headingH;
+        sendRowY     = y;                    y += rowH;
+        sendTrimY    = y;                    y += rowH + 2;
+        sendMeterY   = y;                    y += meterH + gap * 2;
+        outHeadingY  = y;                    y += headingH;
+        outComboY    = y;                    y += comboH + gap;
+        outTrimY     = y;                    y += rowH + 2;
+        outMeterY    = y;                    y += meterH + gap * 2;
+        statusY      = y;                    y += 18;
+        totalHeight  = y + margin;
+    }
+};
+
+const Layout& layout()
+{
+    static const Layout l;
+    return l;
 }
 } // namespace
 
@@ -41,7 +85,7 @@ MixerReturnAudioProcessorEditor::MixerReturnAudioProcessorEditor (MixerReturnAud
     outputModeAttachment = std::make_unique<ComboAttachment> (state, mr::params::outputMode, outputModeBox);
     outputTrimAttachment = std::make_unique<SliderAttachment> (state, mr::params::outputTrim, outputTrimSlider);
 
-    setSize (420, 260);
+    setSize (420, layout().totalHeight);
     startTimerHz (24);
 }
 
@@ -49,45 +93,54 @@ MixerReturnAudioProcessorEditor::~MixerReturnAudioProcessorEditor() = default;
 
 void MixerReturnAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    const auto& l = layout();
+    const auto right = (float) getWidth() - margin;
+
     g.fillAll (juce::Colour (0xff1b1f24));
 
     g.setColour (juce::Colours::white);
     g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
-    g.drawText ("MixerReturn", 16, 12, getWidth() - 32, 24, juce::Justification::centredLeft);
+    g.drawText ("MixerReturn", margin, margin, getWidth() - margin * 2, 24,
+                juce::Justification::centredLeft);
 
-    g.setColour (juce::Colours::white.withAlpha (0.55f));
-    g.setFont (juce::FontOptions (12.0f));
-    g.drawText ("SEND", 16, 78, 200, 16, juce::Justification::centredLeft);
-    g.drawText ("OUTPUT", 16, 154, 200, 16, juce::Justification::centredLeft);
+    auto sectionHeading = [&] (const char* text, int y)
+    {
+        g.setColour (juce::Colours::white.withAlpha (0.12f));
+        g.drawHorizontalLine (y - gap, (float) margin, right);
 
-    g.setColour (juce::Colours::white.withAlpha (0.12f));
-    g.drawHorizontalLine (72, 16.0f, (float) getWidth() - 16.0f);
-    g.drawHorizontalLine (148, 16.0f, (float) getWidth() - 16.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.55f));
+        g.setFont (juce::FontOptions (12.0f));
+        g.drawText (text, margin, y, 200, headingH, juce::Justification::centredLeft);
+    };
+
+    sectionHeading ("SEND", l.sendHeadingY);
+    sectionHeading ("OUTPUT", l.outHeadingY);
+
+    g.setColour (juce::Colours::white.withAlpha (0.45f));
+    g.setFont (juce::FontOptions (11.0f));
+    g.drawText ("Trim", margin, l.sendTrimY, trimLabelW, rowH, juce::Justification::centredLeft);
+    g.drawText ("Trim", margin, l.outTrimY, trimLabelW, rowH, juce::Justification::centredLeft);
 }
 
 void MixerReturnAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced (16);
-    area.removeFromTop (28);
+    const auto& l = layout();
+    const auto x = margin;
+    const auto w = getWidth() - margin * 2;
 
-    busBox.setBounds (area.removeFromTop (26));
+    busBox.setBounds (x, l.busY, w, comboH);
 
-    area.removeFromTop (30); // "SEND" heading and rule
-    auto sendRow = area.removeFromTop (24);
-    sendButton.setBounds (sendRow.removeFromLeft (70));
-    muteButton.setBounds (sendRow.removeFromLeft (70));
-    sendMeter.setBounds (sendRow.reduced (4, 7));
+    sendButton.setBounds (x, l.sendRowY, 78, rowH);
+    muteButton.setBounds (x + 82, l.sendRowY, 78, rowH);
 
-    sendTrimSlider.setBounds (area.removeFromTop (24));
+    sendTrimSlider.setBounds (x + trimLabelW, l.sendTrimY, w - trimLabelW, rowH);
+    sendMeter.setBounds (x, l.sendMeterY, w, meterH);
 
-    area.removeFromTop (30); // "OUTPUT" heading and rule
-    outputModeBox.setBounds (area.removeFromTop (26));
+    outputModeBox.setBounds (x, l.outComboY, w, comboH);
+    outputTrimSlider.setBounds (x + trimLabelW, l.outTrimY, w - trimLabelW, rowH);
+    outputMeter.setBounds (x, l.outMeterY, w, meterH);
 
-    auto outRow = area.removeFromTop (24);
-    outputTrimSlider.setBounds (outRow.removeFromLeft (outRow.getWidth() - 90));
-    outputMeter.setBounds (outRow.reduced (6, 7));
-
-    statusLabel.setBounds (area.removeFromBottom (18));
+    statusLabel.setBounds (x, l.statusY, w, 18);
 }
 
 void MixerReturnAudioProcessorEditor::timerCallback()

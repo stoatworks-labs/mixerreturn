@@ -11,11 +11,18 @@ the *why*, and the traps.
 A **shared summing bus across plugin instances**, shipping as VST3, AU and Standalone,
 built with JUCE in C++.
 
-It exists for one job: let a Waves Dugan Automixer running in SuperRack Performer be bolted
-onto a console that hasn't got one, post-fader, without spending an insert slot or a second
-channel strip per mic. The desk's direct outs feed one rack per channel, each rack runs a
-Dugan instance followed by a MixerReturn instance, and one further instance emits the sum,
-which returns to the desk as a mix's External Input.
+It is an **interface for Waves SuperRack Performer**. It exists for one job: let a Dugan
+Automixer run across a console's channel direct outs and return the automixed result summed
+to a single stereo pair, back into a group's External Input. The desk's direct outs feed one
+rack per channel, each rack runs a Dugan instance followed by a MixerReturn instance, and one
+further instance emits the sum.
+
+**The product claim is what it doesn't cost.** Working on direct outs rather than inserts
+means the desk's **insert slots stay free for normal plugin inserts on the channel strips**,
+the automixer sits post-fader without relocating any insert points, and no channel is used
+twice. It adds an automixer to a desk without taking anything away from it. Lead with that
+when describing the project — it is the reason anyone would choose this over inserting the
+automixer per channel.
 
 Phase 1 of a two-phase project. Phase 2 is the virtual audio device that was the original
 idea — see §7.
@@ -117,7 +124,8 @@ SoundGrid-format plugins only, no VST3), and routing between separate applicatio
 
 **Verified:** the summing bus, numerically, by `mrtest` — one-block delay with the summing
 instance processed first and last, 24 senders with the order reshuffled every block, trim,
-mute, bypass participation, and bus isolation.
+mute, bypass participation, and bus isolation. `pluginval` at strictness 8 passes clean on
+VST3 and passes on AU with one benign JUCE-wrapper warning ("Current program is -1").
 
 **Never done:** loaded in SuperRack Performer. Run against a real SQ or any console. Used on
 a show. Every claim about console behaviour comes from the reference guide, not from

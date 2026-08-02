@@ -104,3 +104,21 @@ target_compile_definitions(mrtest PUBLIC
     DIAG_GIT_REV="${MIXERRETURN_GIT_REV}")
 target_include_directories(mrtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mrtest PRIVATE MixerReturn juce::juce_audio_utils)
+
+# --------------------------------------------------------------------------------------
+# mrshot — renders the editor to PNG for the documentation. Not a screen capture: see the
+# comment at the top of tools/mrshot.cpp for why photographing a window is the wrong tool
+# for this job.
+# --------------------------------------------------------------------------------------
+juce_add_console_app(mrshot PRODUCT_NAME "mrshot")
+juce_generate_juce_header(mrshot)
+target_sources(mrshot PRIVATE tools/mrshot.cpp)
+target_compile_definitions(mrshot PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    # Needed to pump the message loop so the editor's timer populates the meters and the
+    # member-count readout before the snapshot is taken.
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    DIAG_GIT_REV="${MIXERRETURN_GIT_REV}")
+target_include_directories(mrshot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(mrshot PRIVATE MixerReturn juce::juce_audio_utils)

@@ -1,9 +1,13 @@
 # mixerreturn (MixerReturn)
 
-Shared summing bus across plugin instances, so a Dugan Automixer in SuperRack Performer can
-be bolted onto a console without one — post-fader, no insert slots, no doubled channel
-strips. VST3/AU/Standalone, JUCE/C++, CMake. v0.1.0. Phase 1 of two; Phase 2 is the virtual
-audio device (see AGENTS.md §7).
+An interface for Waves SuperRack Performer: a shared summing bus across plugin instances, so
+a Dugan Automixer can run on a console's direct outs and return the automixed result as a
+single stereo pair to a group's External Input. VST3/AU/Standalone, JUCE/C++, CMake. v0.1.0.
+Phase 1 of two; Phase 2 is the virtual audio device (see AGENTS.md §7).
+
+**Lead with what it doesn't cost:** working on direct outs rather than inserts leaves the
+desk's insert slots free for normal channel-strip plugins, puts the automixer post-fader
+without moving any insert points, and uses one channel strip per mic.
 
 ## Commands (CMake)
 - Configure: `cmake -B build -DCMAKE_BUILD_TYPE=Release`
