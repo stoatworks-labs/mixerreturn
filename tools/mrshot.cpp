@@ -28,21 +28,8 @@ void setBool (MixerReturnAudioProcessor& p, const char* id, bool v)
     p.getState().getParameter (id)->setValueNotifyingHost (v ? 1.0f : 0.0f);
 }
 
-bool writeSnapshot (MixerReturnAudioProcessor& processor, const juce::File& target)
+bool writePng (const juce::Image& image, const juce::File& target)
 {
-    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
-
-    if (editor == nullptr)
-        return false;
-
-    editor->setBounds (0, 0, editor->getWidth(), editor->getHeight());
-
-    // Let the editor's timer run so the meters and the member-count readout are populated
-    // rather than showing their initial state.
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (250);
-
-    const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
-
     target.deleteFile();
     std::unique_ptr<juce::FileOutputStream> stream (target.createOutputStream());
 
@@ -51,6 +38,51 @@ bool writeSnapshot (MixerReturnAudioProcessor& processor, const juce::File& targ
 
     juce::PNGImageFormat png;
     return png.writeImageToStream (image, *stream);
+}
+
+juce::Image renderEditor (MixerReturnAudioProcessor& processor)
+{
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+
+    if (editor == nullptr)
+        return {};
+
+    editor->setBounds (0, 0, editor->getWidth(), editor->getHeight());
+
+    // Let the editor's timer run so the meters and the member-count readout are populated
+    // rather than showing their initial state.
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (250);
+
+    return editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+}
+
+/** Stacks the two instances into one portrait image.
+
+    The site's thumbnail panel is taller than it is wide, so a single landscape shot gets
+    cover-cropped hard enough to slice the labels off. A stacked pair fills that panel at
+    close to its own aspect ratio, and happens to be the more useful picture anyway: the
+    two roles side by side are the thing worth showing. */
+juce::Image stackVertically (const juce::Image& top, const juce::Image& bottom, int gap)
+{
+    const auto contentW = juce::jmax (top.getWidth(), bottom.getWidth());
+    const auto h = top.getHeight() + gap + bottom.getHeight();
+
+    // Pad out to roughly 4:5 rather than letting the stack stay as narrow as the editor.
+    // Anything consuming this centre-crops it to fill a panel, and a composite narrower
+    // than its destination loses the top and bottom of the picture — here, the title of
+    // one instance and the status readout of the other, which are the two things worth
+    // reading. Padding sideways costs only background.
+    constexpr float targetAspect = 0.8f;
+    const auto w = juce::jmax (contentW, juce::roundToInt ((float) h * targetAspect));
+
+    juce::Image combined (juce::Image::ARGB, w, h, true);
+    juce::Graphics g (combined);
+
+    g.fillAll (juce::Colour (0xff1b1f24));
+    g.drawImageAt (top, (w - top.getWidth()) / 2, 0);
+    g.drawImageAt (bottom, (w - bottom.getWidth()) / 2, top.getHeight() + gap);
+
+    return combined;
 }
 } // namespace
 
@@ -111,9 +143,15 @@ int main (int argc, char** argv)
 
     const auto sendShot = outDir.getChildFile ("send.png");
     const auto sumShot  = outDir.getChildFile ("sum.png");
+    const auto pairShot = outDir.getChildFile ("pair.png");
 
-    const bool ok = writeSnapshot (*senders.front(), sendShot)
-                 && writeSnapshot (*master, sumShot);
+    const auto sendImage = renderEditor (*senders.front());
+    const auto sumImage  = renderEditor (*master);
+
+    const bool ok = sendImage.isValid() && sumImage.isValid()
+                 && writePng (sendImage, sendShot)
+                 && writePng (sumImage, sumShot)
+                 && writePng (stackVertically (sendImage, sumImage, 24), pairShot);
 
     for (auto& s : senders)
         s->releaseResources();
@@ -125,8 +163,8 @@ int main (int argc, char** argv)
         return 1;
     }
 
-    std::printf ("wrote %s\nwrote %s\n",
-                 sendShot.getFullPathName().toRawUTF8(),
-                 sumShot.getFullPathName().toRawUTF8());
+    for (const auto& f : { sendShot, sumShot, pairShot })
+        std::printf ("wrote %s\n", f.getFullPathName().toRawUTF8());
+
     return 0;
 }
