@@ -72,14 +72,42 @@ in this application, whereas a per-channel delay spread of even a few samples is
 - **A muted or non-sending member must actively clear its slot**, not merely skip writing.
   Skipping would leave its last block in the sum forever.
 - **The summing instance reports one block of latency**; a passthrough sender reports zero.
-- **Bus membership changes happen on the message thread**, behind a try-lock. Acquiring a
-  slot may allocate, and telling the host about a latency change must not happen from the
-  audio callback. During a reconfiguration the audio thread may skip a block; the barrier
-  uses `>=` rather than `==` so a member disappearing mid-block cannot wedge it.
+- **The audio path takes no lock at all**, and this is not a stylistic preference. Bus and
+  slot are packed into one atomic word. The first version used a process-wide try-lock and
+  skipped the block on failure; see "The lock that broke it" below. Bus membership changes
+  still happen on the message thread, because acquiring a slot may allocate and telling the
+  host about a latency change must not happen from the audio callback. The barrier uses
+  `>=` rather than `==` so a member disappearing mid-block cannot wedge it.
+- **A slot's buffers are sized only while that slot is inactive, and only that slot.** An
+  instance joining an existing bus must not reallocate buffers underneath instances that
+  are already streaming, which is why a slot is `claimed` before it is `active`.
 - **The bus is per-process.** Instances in two separate hosts cannot see each other. This
   is a real constraint, not an oversight — crossing process boundaries would need shared
   memory and a cross-process barrier, and the target use case keeps every rack inside one
   SuperRack.
+
+### The lock that broke it
+
+Worth recording, because it is the failure this design is most likely to have reintroduced
+if something ever goes wrong here again.
+
+The first implementation looked up its bus and slot behind a **process-wide `SpinLock`**,
+taken from the audio thread with `tryEnter`, skipping the block when the try failed. The
+reasoning was that a skipped block during reconfiguration is harmless. The flaw is that the
+lock was shared by *every* instance, so it was not only contended during reconfiguration —
+it was contended whenever two instances processed at the same time, which is the normal
+case for a host running racks across several audio threads. Losers skipped their entire
+block, including `arrive()`, so they dropped out of the sum *and* left the barrier an
+arrival short, desynchronising every other member.
+
+Every sequential test passed throughout, and always would have: one thread always wins an
+uncontended try-lock. It took a test that gives each instance its own thread to expose it,
+on the second block. The fix was to remove the lock from the audio path entirely.
+
+The general lesson is the ordinary real-time audio one, but it is worth stating in the form
+it took here: **a try-lock is not a safe way to make a shared structure real-time — it just
+converts contention into silently dropped work**, and dropped work in a barrier is worse
+than a stall.
 
 ## Console-side notes (Allen & Heath SQ)
 

@@ -28,15 +28,27 @@ beats short: an uneven delay across senders comb-filters the sum. Never "optimis
 master into reading the current block.
 
 Load-bearing details that look like they can be simplified but cannot:
+- **No lock in `processBlock` — not even a try-lock.** The first commit guarded the bus
+  lookup with a process-wide SpinLock and skipped the block (including `arrive()`) on a
+  failed try. Sequential tests always win an uncontended try-lock, so it looked fine until
+  instances ran on separate threads and silently dropped out of the sum. Bus and slot are
+  packed in one atomic instead.
 - `processBlockBypassed` must still call `arrive()` or the barrier wedges forever.
 - A muted member must `clearSlot()`, not skip writing, or its last block sticks in the sum.
 - `arrive()` uses `>=` not `==` so a member leaving mid-block can't wedge the barrier.
+- A slot's buffers are sized only while that slot is inactive, and only that slot — a
+  joining instance must not reallocate underneath instances already streaming.
 
 ## Verifying changes
 `mrtest` pushes real audio through the actual shipped `MixerReturnAudioProcessor` and checks
-the sum numerically. It covers the summing instance processed first *and* last, and 24
-senders with the order reshuffled every block — because a barrier bug is inaudible right up
-until it comb-filters, and listening will never catch it.
+the sum numerically. It covers the summing instance processed first *and* last, 24 senders
+with the order reshuffled every block, and 400 blocks with 17 instances racing on their own
+threads — because a barrier bug is inaudible right up until it comb-filters, and listening
+will never catch it.
+
+**Sequential tests are not enough here, and that is not a theoretical point** — the
+concurrent test is what found the try-lock bug above, after every sequential test passed.
+Run the TSan build too (recipe in AGENTS.md §8); it is currently clean.
 
 Use **relative** tolerances when comparing sums: accumulating N floats in a different order
 than the reference legitimately differs by a couple of ULP.

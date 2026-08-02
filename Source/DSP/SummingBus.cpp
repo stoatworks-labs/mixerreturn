@@ -6,28 +6,36 @@
 namespace mr
 {
 
-void SummingBus::prepare (int blockSize, int numChannels)
+int SummingBus::acquireSlot (int blockSize, int numChannels)
 {
-    preparedBlockSize = std::max (preparedBlockSize, blockSize);
-    preparedChannels  = std::max (preparedChannels, std::min (numChannels, maxChannels));
+    const auto channels = std::min (numChannels, maxChannels);
 
-    for (auto& slot : slots)
-        for (auto& page : slot.pages)
-            for (int ch = 0; ch < preparedChannels; ++ch)
-                if ((int) page[(size_t) ch].size() < preparedBlockSize)
-                    page[(size_t) ch].assign ((size_t) preparedBlockSize, 0.0f);
-}
-
-int SummingBus::acquireSlot()
-{
     for (int i = 0; i < maxSlots; ++i)
     {
+        auto& s = slots[(size_t) i];
+
+        // `claimed` rather than `active`: the buffers have to be sized and zeroed before
+        // any reader is allowed to see this slot, so publishing `active` is the last step.
         bool expected = false;
-        if (slots[(size_t) i].active.compare_exchange_strong (expected, true))
+        if (! s.claimed.compare_exchange_strong (expected, true))
+            continue;
+
+        for (auto& page : s.pages)
         {
-            members.fetch_add (1, std::memory_order_acq_rel);
-            return i;
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                auto& buffer = page[(size_t) ch];
+
+                if ((int) buffer.size() < blockSize)
+                    buffer.assign ((size_t) blockSize, 0.0f);
+                else
+                    std::fill (buffer.begin(), buffer.end(), 0.0f);
+            }
         }
+
+        members.fetch_add (1, std::memory_order_acq_rel);
+        s.active.store (true, std::memory_order_release);
+        return i;
     }
 
     return -1;
@@ -40,18 +48,16 @@ void SummingBus::releaseSlot (int slot)
 
     auto& s = slots[(size_t) slot];
 
-    if (! s.active.exchange (false))
+    if (! s.active.exchange (false, std::memory_order_acq_rel))
         return;
-
-    for (auto& page : s.pages)
-        for (auto& channel : page)
-            std::fill (channel.begin(), channel.end(), 0.0f);
 
     members.fetch_sub (1, std::memory_order_acq_rel);
 
     // A member leaving mid-block would otherwise strand the barrier one arrival short
     // for the rest of that block.
     arrived.store (0, std::memory_order_release);
+
+    s.claimed.store (false, std::memory_order_release);
 }
 
 void SummingBus::writeSlot (int slot, int channel, const float* src, int numSamples, float gain) noexcept

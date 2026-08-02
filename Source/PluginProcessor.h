@@ -55,10 +55,25 @@ private:
     void moveToBus (int newBusIndex);
     void leaveBus();
 
+    /** Bus and slot packed into one word so the audio thread can read the pair atomically.
+
+        This must not be a lock. An earlier version guarded it with a try-lock, which was
+        fine until instances ran on different threads at once: the lock was process-wide,
+        so contending instances lost the try and skipped their whole block — including
+        arrive(), which desynchronised the barrier for everyone. Sequential tests cannot
+        see that, because a single thread always wins an uncontended try-lock. */
+    static constexpr uint32_t unassigned = 0;
+    static uint32_t packAssignment (int bus, int slot) noexcept
+    {
+        return ((uint32_t) (bus + 1) << 16) | (uint32_t) (slot + 1);
+    }
+    static int busOf (uint32_t a) noexcept  { return (int) (a >> 16) - 1; }
+    static int slotOf (uint32_t a) noexcept { return (int) (a & 0xffffu) - 1; }
+
     juce::AudioProcessorValueTreeState apvts;
 
-    int currentBus  = -1;
-    int currentSlot = -1;
+    std::atomic<uint32_t> assignment { unassigned };
+    int requestedBus = -1;
 
     int reportedLatency = 0;
     int preparedBlock   = 0;

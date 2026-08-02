@@ -7,8 +7,10 @@
 
 #include "../Source/PluginProcessor.h"
 
+#include <atomic>
 #include <cstdio>
 #include <numeric>
+#include <thread>
 #include <vector>
 
 namespace
@@ -296,6 +298,109 @@ void testTwentyFourChannelsShuffled()
 
     check (allGood, "24 blocks x 64 samples, order reshuffled each block, delay stayed uniform");
 }
+/** Every other test here drives processBlock sequentially from one thread, which exercises
+    the *ordering* the barrier has to survive but not the *concurrency*. A host is free to
+    run racks on several audio threads at once, so the interesting question — can a sender
+    writing its slot overlap the return reading the sum, and does the page flip stay sane
+    when arrivals land simultaneously — is untouched by sequential tests.
+
+    Here every instance gets its own thread, spinning on a generation counter so they enter
+    each block together rather than being spread out by thread creation. Anything that
+    slipped through the atomics shows up as a wrong sum. */
+void testConcurrentProcessing()
+{
+    std::printf ("\n-- every instance on its own thread, processing concurrently --\n");
+
+    constexpr int numSenders = 16;
+    constexpr int numBlocks  = 400;
+
+    Rig rig (numSenders, 0);
+    const int members = numSenders + 1; // the senders, plus the return
+
+    std::atomic<int>  generation { 0 };
+    std::atomic<int>  completed  { 0 };
+    std::atomic<bool> quit       { false };
+
+    auto worker = [&] (int index)
+    {
+        int seen = 0;
+
+        for (;;)
+        {
+            while (generation.load (std::memory_order_acquire) == seen
+                   && ! quit.load (std::memory_order_acquire))
+                std::this_thread::yield();
+
+            if (quit.load (std::memory_order_acquire))
+                return;
+
+            seen = generation.load (std::memory_order_acquire);
+
+            juce::MidiBuffer localMidi;
+
+            if (index == numSenders)
+                rig.master->processBlock (rig.masterBuffer, localMidi);
+            else
+                rig.senders[(size_t) index]->processBlock (rig.senderBuffers[(size_t) index], localMidi);
+
+            completed.fetch_add (1, std::memory_order_acq_rel);
+        }
+    };
+
+    std::vector<std::thread> threads;
+    for (int i = 0; i < members; ++i)
+        threads.emplace_back (worker, i);
+
+    bool allGood = true;
+
+    for (int block = 0; block < numBlocks && allGood; ++block)
+    {
+        for (int i = 0; i < numSenders; ++i)
+        {
+            const auto value = (float) (block + 1) * (float) (i + 1) * 0.001f;
+            rig.senderBuffers[(size_t) i].clear();
+            for (int ch = 0; ch < 2; ++ch)
+                juce::FloatVectorOperations::fill (
+                    rig.senderBuffers[(size_t) i].getWritePointer (ch), value, blockSize);
+        }
+        rig.masterBuffer.clear();
+
+        completed.store (0, std::memory_order_release);
+        generation.fetch_add (1, std::memory_order_acq_rel);
+
+        while (completed.load (std::memory_order_acquire) < members)
+            std::this_thread::yield();
+
+        float expected = 0.0f;
+        if (block > 0)
+            for (int i = 0; i < numSenders; ++i)
+                expected += (float) block * (float) (i + 1) * 0.001f;
+
+        const auto tolerance = juce::jmax (1.0e-7f, std::abs (expected) * 2.0e-6f);
+
+        for (int s = 0; s < blockSize; ++s)
+        {
+            const auto got = rig.masterBuffer.getReadPointer (0)[s];
+            if (std::abs (got - expected) > tolerance)
+            {
+                std::printf ("  FAIL  block %d sample %d: got %.9f, expected %.9f\n",
+                             block, s, got, expected);
+                allGood = false;
+                ++failures;
+                break;
+            }
+        }
+    }
+
+    quit.store (true, std::memory_order_release);
+    generation.fetch_add (1, std::memory_order_acq_rel);
+
+    for (auto& t : threads)
+        t.join();
+
+    check (allGood, juce::String (numBlocks) + " blocks with " + juce::String (members)
+                        + " instances racing on their own threads, sum stayed exact");
+}
 } // namespace
 
 int main()
@@ -312,6 +417,7 @@ int main()
     testBypassStillArrives();
     testBusIsolation();
     testTwentyFourChannelsShuffled();
+    testConcurrentProcessing();
 
     std::printf ("\n%s (%d failure%s)\n", failures == 0 ? "PASS" : "FAIL",
                  failures, failures == 1 ? "" : "s");

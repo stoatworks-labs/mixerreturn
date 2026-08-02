@@ -5,18 +5,6 @@
 
 #include <mutex>
 
-namespace
-{
-/** Bus membership changes are message-thread work: acquiring a slot may allocate its
-    page buffers, and telling the host about a latency change must not happen from the
-    audio callback. The audio thread only ever reads the resulting assignment. */
-juce::SpinLock& busAssignmentLock()
-{
-    static juce::SpinLock lock;
-    return lock;
-}
-} // namespace
-
 MixerReturnAudioProcessor::MixerReturnAudioProcessor()
     : juce::AudioProcessor (BusesProperties()
                                 .withInput ("Input", juce::AudioChannelSet::stereo(), true)
@@ -57,7 +45,7 @@ void MixerReturnAudioProcessor::handleAsyncUpdate()
 {
     const auto wanted = (int) *apvts.getRawParameterValue (mr::params::busSelect);
 
-    if (wanted != currentBus)
+    if (wanted != requestedBus)
         moveToBus (wanted);
 
     const auto mode = (mr::params::OutputMode) (int) *apvts.getRawParameterValue (mr::params::outputMode);
@@ -72,36 +60,35 @@ void MixerReturnAudioProcessor::handleAsyncUpdate()
 
 void MixerReturnAudioProcessor::moveToBus (int newBusIndex)
 {
-    const juce::SpinLock::ScopedLockType lock (busAssignmentLock());
+    // Stop the audio thread using the old slot before releasing it. It may still be
+    // part-way through a block that began before this store; that is harmless, because a
+    // released slot keeps its buffers and readers skip it once it is inactive.
+    leaveBus();
 
-    if (currentBus >= 0 && currentSlot >= 0)
-        mr::BusRegistry::get().bus (currentBus).releaseSlot (currentSlot);
+    requestedBus = newBusIndex;
 
-    currentBus  = newBusIndex;
-    currentSlot = -1;
-
-    if (currentBus < 0)
+    if (newBusIndex < 0)
         return;
 
-    auto& bus = mr::BusRegistry::get().bus (currentBus);
-    bus.prepare (juce::jmax (preparedBlock, 1), mr::maxChannels);
-    currentSlot = bus.acquireSlot();
+    auto& bus = mr::BusRegistry::get().bus (newBusIndex);
+    const auto slot = bus.acquireSlot (juce::jmax (preparedBlock, 1), mr::maxChannels);
 
-    if (currentSlot < 0)
-        CP_LOG_ERROR ("Bus " + juce::String (currentBus + 1) + " is full; this instance is not connected");
-    else
-        CP_LOG_INFO ("Joined bus " + juce::String (currentBus + 1) + " in slot " + juce::String (currentSlot));
+    if (slot < 0)
+    {
+        CP_LOG_ERROR ("Bus " + juce::String (newBusIndex + 1) + " is full; this instance is not connected");
+        return;
+    }
+
+    assignment.store (packAssignment (newBusIndex, slot), std::memory_order_release);
+    CP_LOG_INFO ("Joined bus " + juce::String (newBusIndex + 1) + " in slot " + juce::String (slot));
 }
 
 void MixerReturnAudioProcessor::leaveBus()
 {
-    const juce::SpinLock::ScopedLockType lock (busAssignmentLock());
+    const auto previous = assignment.exchange (unassigned, std::memory_order_acq_rel);
 
-    if (currentBus >= 0 && currentSlot >= 0)
-        mr::BusRegistry::get().bus (currentBus).releaseSlot (currentSlot);
-
-    currentBus  = -1;
-    currentSlot = -1;
+    if (previous != unassigned)
+        mr::BusRegistry::get().bus (busOf (previous)).releaseSlot (slotOf (previous));
 }
 
 void MixerReturnAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -152,52 +139,51 @@ void MixerReturnAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     float sendMagnitude = 0.0f;
 
+    const auto current = assignment.load (std::memory_order_acquire);
+
+    if (current != unassigned)
     {
-        const juce::SpinLock::ScopedTryLockType lock (busAssignmentLock());
+        auto& bus = mr::BusRegistry::get().bus (busOf (current));
+        const auto slot = slotOf (current);
 
-        if (lock.isLocked() && currentSlot >= 0 && currentBus >= 0)
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            auto& bus = mr::BusRegistry::get().bus (currentBus);
+            if (sending)
+            {
+                bus.writeSlot (slot, ch, buffer.getReadPointer (ch), numSamples, sendGain);
+                sendMagnitude = juce::jmax (sendMagnitude,
+                                            buffer.getMagnitude (ch, 0, numSamples) * sendGain);
+            }
+            else
+            {
+                // Not simply "skip writing": a muted member's previous block would
+                // otherwise stay in the sum forever.
+                bus.clearSlot (slot, ch, numSamples);
+            }
+        }
 
+        if (mode != mr::params::OutputMode::input)
+        {
             for (int ch = 0; ch < numChannels; ++ch)
             {
-                if (sending)
-                {
-                    bus.writeSlot (currentSlot, ch, buffer.getReadPointer (ch), numSamples, sendGain);
-                    sendMagnitude = juce::jmax (sendMagnitude,
-                                                buffer.getMagnitude (ch, 0, numSamples) * sendGain);
-                }
+                auto* sum = scratch.getWritePointer (ch);
+                bus.readSum (sum, ch, numSamples);
+
+                if (mode == mr::params::OutputMode::busSum)
+                    buffer.copyFrom (ch, 0, sum, numSamples);
                 else
-                {
-                    // Not simply "skip writing": a muted member's previous block would
-                    // otherwise stay in the sum forever.
-                    bus.clearSlot (currentSlot, ch, numSamples);
-                }
+                    buffer.addFrom (ch, 0, sum, numSamples, 1.0f);
             }
-
-            if (mode != mr::params::OutputMode::input)
-            {
-                for (int ch = 0; ch < numChannels; ++ch)
-                {
-                    auto* sum = scratch.getWritePointer (ch);
-                    bus.readSum (sum, ch, numSamples);
-
-                    if (mode == mr::params::OutputMode::busSum)
-                        buffer.copyFrom (ch, 0, sum, numSamples);
-                    else
-                        buffer.addFrom (ch, 0, sum, numSamples, 1.0f);
-                }
-            }
-
-            // Last thing in the block, always: this is what flips the pages.
-            bus.arrive();
         }
-        else if (mode == mr::params::OutputMode::busSum)
-        {
-            // Unable to reach the bus this block — emit silence rather than leaking this
-            // rack's own input to a destination expecting only the sum.
-            buffer.clear();
-        }
+
+        // Last thing in the block, always: this is what flips the pages.
+        bus.arrive();
+    }
+    else if (mode == mr::params::OutputMode::busSum)
+    {
+        // Not on a bus — emit silence rather than leaking this rack's own input to a
+        // destination expecting only the sum.
+        buffer.clear();
     }
 
     buffer.applyGain (outGain);
@@ -213,14 +199,14 @@ void MixerReturnAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& 
     const auto numSamples  = buffer.getNumSamples();
     const auto numChannels = juce::jmin (buffer.getNumChannels(), mr::maxChannels);
 
-    const juce::SpinLock::ScopedTryLockType lock (busAssignmentLock());
+    const auto current = assignment.load (std::memory_order_acquire);
 
-    if (lock.isLocked() && currentSlot >= 0 && currentBus >= 0)
+    if (current != unassigned)
     {
-        auto& bus = mr::BusRegistry::get().bus (currentBus);
+        auto& bus = mr::BusRegistry::get().bus (busOf (current));
 
         for (int ch = 0; ch < numChannels; ++ch)
-            bus.clearSlot (currentSlot, ch, numSamples);
+            bus.clearSlot (slotOf (current), ch, numSamples);
 
         bus.arrive();
     }
@@ -231,10 +217,12 @@ void MixerReturnAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& 
 
 int MixerReturnAudioProcessor::getBusMemberCount() const noexcept
 {
-    if (currentBus < 0)
+    const auto current = assignment.load (std::memory_order_acquire);
+
+    if (current == unassigned)
         return 0;
 
-    return mr::BusRegistry::get().bus (currentBus).getMemberCount();
+    return mr::BusRegistry::get().bus (busOf (current)).getMemberCount();
 }
 
 juce::AudioProcessorEditor* MixerReturnAudioProcessor::createEditor()

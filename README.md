@@ -4,9 +4,10 @@
 > (Anthropic), directed and reviewed by a human author. The summing bus has been verified
 > numerically against the actual shipped processor class — a one-block delay with the
 > summing instance processed both first and last, 24 senders with the host's processing
-> order reshuffled on every block, plus trim, mute, bypass participation and bus isolation
-> (`mrtest`). `pluginval` passes clean at strictness 8 on VST3, and on AU with one known
-> benign wrapper warning. It has **not** been loaded in SuperRack Performer, **not** been
+> order reshuffled on every block, 400 blocks with 17 instances racing on their own
+> threads, plus trim, mute, bypass participation and bus isolation (`mrtest`), and it is
+> clean under ThreadSanitizer. `pluginval` passes clean at strictness 8 on VST3, and on AU
+> with one known benign wrapper warning. It has **not** been loaded in SuperRack Performer, **not** been
 > run against a real console, and **not** been used on a show. Every claim about SQ
 > behaviour comes from the reference guide, not from hardware. Review before use on live gear.
 
@@ -113,9 +114,15 @@ summing bus, and `mrshot` regenerates the screenshots above:
 ## Status
 
 v0.1.0. The summing bus is verified numerically — including 24 senders with the processing
-order reshuffled on every block — and `pluginval` passes at strictness 8. But it **has not
-been run inside SuperRack Performer, or against a real SQ**. Nothing here has been near a
-live show.
+order reshuffled on every block, and 17 instances processing concurrently on their own
+threads — it is clean under ThreadSanitizer, and `pluginval` passes at strictness 8. But it
+**has not been run inside SuperRack Performer, or against a real SQ**. Nothing here has
+been near a live show.
+
+That concurrent test earned its place: it found a real bug that every sequential test
+passed straight through. The audio path used to take a process-wide try-lock and skip the
+block when it lost, which is invisible on one thread and drops instances out of the sum on
+several. [docs/DESIGN.md](docs/DESIGN.md) has the detail.
 
 ## Roadmap
 

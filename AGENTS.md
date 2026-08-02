@@ -40,6 +40,22 @@ and it will pass every listening test until the host happens to reorder its thre
 
 `tests/mrtest.cpp` exists to catch exactly that regression. Run it.
 
+## 2a. The bug that shipped in the first commit, so it isn't reintroduced
+
+The first version guarded the audio path's bus lookup with a **process-wide `SpinLock`**,
+taken with `tryEnter`. On failure it skipped the block — including `arrive()`.
+
+That is invisible to any sequential test, because a single thread always wins an
+uncontended try-lock, and every test at the time drove `processBlock` from one thread. The
+moment instances ran on different threads at once — which is exactly what a host does with
+racks — they contended on that one shared lock, losers silently dropped out of the sum, and
+their missing arrivals desynchronised the barrier for everyone.
+
+The fix was to delete the lock from the audio path entirely and pack bus and slot into one
+atomic. **If you find yourself adding any lock, allocation or blocking call to
+`processBlock`, this is the failure you are recreating.** `testConcurrentProcessing` in
+`mrtest` is the regression guard; it caught this, and a sequential test never would have.
+
 ## 3. Layout
 
 ```
@@ -75,10 +91,15 @@ Things that follow from it, each of which is load-bearing:
 - **`arrive()` uses `>=` not `==`.** A member disappearing mid-block would otherwise wedge
   the barrier for good. The cost is that a reconfiguration can flip twice in one block —
   an audible tick at worst, self-correcting on the next.
-- **Bus membership changes on the message thread**, via `AsyncUpdater`, behind a try-lock.
-  Acquiring a slot may allocate, and `setLatencySamples` notifies the host; neither belongs
-  in the audio callback. The audio thread uses `ScopedTryLockType` and skips the bus for a
-  block if it can't get in, which the barrier recovers from within a block or two.
+- **The audio path must never take a lock. Not even a try-lock.** Bus and slot live packed
+  in one `std::atomic<uint32_t>` on the processor for exactly this reason. Bus membership
+  still changes on the message thread via `AsyncUpdater` — acquiring a slot may allocate,
+  and `setLatencySamples` notifies the host — but the audio thread only ever does an
+  acquire-load of the assignment.
+- **A slot's buffers are only sized while the slot is inactive**, and only that slot's:
+  a new instance joining must not reallocate underneath instances already streaming. The
+  handoff to readers is the release store of `active`, which is why `Slot` has both
+  `claimed` and `active`.
 - **Latency is reported per output mode**: one block if this instance emits the sum, zero if
   it merely passes its input through.
 
@@ -123,9 +144,19 @@ SoundGrid-format plugins only, no VST3), and routing between separate applicatio
 ## 8. What has and hasn't been verified
 
 **Verified:** the summing bus, numerically, by `mrtest` — one-block delay with the summing
-instance processed first and last, 24 senders with the order reshuffled every block, trim,
-mute, bypass participation, and bus isolation. `pluginval` at strictness 8 passes clean on
-VST3 and passes on AU with one benign JUCE-wrapper warning ("Current program is -1").
+instance processed first and last, 24 senders with the order reshuffled every block, 400
+blocks with 17 instances each on their own thread racing concurrently, trim, mute, bypass
+participation, and bus isolation. Clean under **ThreadSanitizer**, and `pluginval` at
+strictness 8 passes clean on VST3 and passes on AU with one benign JUCE-wrapper warning
+("Current program is -1").
+
+To rebuild the TSan variant:
+
+```bash
+cmake -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" && cmake --build build-tsan --target mrtest
+```
 
 **Never done:** loaded in SuperRack Performer. Run against a real SQ or any console. Used on
 a show. Every claim about console behaviour comes from the reference guide, not from

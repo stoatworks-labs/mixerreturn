@@ -40,16 +40,21 @@ class SummingBus
 public:
     SummingBus() = default;
 
-    /** Sizes the slot buffers. Safe to call repeatedly; only grows. Not real-time safe,
-        so it belongs in prepareToPlay. */
-    void prepare (int blockSize, int numChannels);
+    /** Claims a slot for one plugin instance and sizes just that slot's buffers, leaving
+        every other member's alone — a new instance joining must not reallocate underneath
+        the instances already streaming. Returns -1 if the bus is full.
 
-    /** Claims a slot for one plugin instance. Returns -1 if the bus is full.
-        Message thread only. */
-    int acquireSlot();
+        Message thread only, and it may allocate. The buffers are only ever touched while
+        the slot is inactive, and readers skip inactive slots, so the handoff to the audio
+        thread is a single release store of `active`. */
+    int acquireSlot (int blockSize, int numChannels);
 
-    /** Releases a slot and zeroes both its pages, so a removed member cannot leave a
-        block of audio stuck in the sum. Message thread only. */
+    /** Releases a slot. Message thread only.
+
+        Deliberately does not touch the buffers: an audio thread may still be part-way
+        through a block that began before the release, and zeroing underneath it would be
+        a data race for no benefit. Clearing happens on acquire instead, while nobody can
+        be reading. */
     void releaseSlot (int slot);
 
     /** Number of instances currently holding a slot. */
@@ -74,6 +79,9 @@ public:
 private:
     struct Slot
     {
+        /** Reserved by a would-be member, but not yet safe for readers to touch. */
+        std::atomic<bool> claimed { false };
+        /** Published to readers only once the buffers are sized and zeroed. */
         std::atomic<bool> active { false };
         // [page][channel][sample], flattened per page/channel into one vector.
         std::array<std::array<std::vector<float>, maxChannels>, 2> pages;
@@ -84,9 +92,6 @@ private:
     std::atomic<int> members   { 0 };
     std::atomic<int> arrived   { 0 };
     std::atomic<int> writePage { 0 };
-
-    int preparedBlockSize = 0;
-    int preparedChannels  = 0;
 };
 
 /** Process-wide bus registry.
