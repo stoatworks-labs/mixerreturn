@@ -13,6 +13,7 @@ without moving any insert points, and uses one channel strip per mic.
 - Configure: `cmake -B build -DCMAKE_BUILD_TYPE=Release`
 - Build: `cmake --build build`
 - Test: `./build/mrtest_artefacts/Release/mrtest`
+- Test through the real VST3: `./build/mrhost_artefacts/Release/mrhost build/MixerReturn_artefacts/Release/VST3/MixerReturn.vst3`
 - Built plugins land under `build/` as VST3/AU bundles.
 
 ## Notes
@@ -20,7 +21,9 @@ without moving any insert points, and uses one channel strip per mic.
   allocation-free. Bus membership changes go through `AsyncUpdater` onto the message thread.
 - `Source/DSP/SummingBus.{h,cpp}` has no JUCE dependency. Keep it that way; it makes the bus
   testable on its own and portable into Phase 2's driver.
-- Local git only so far — no remote yet, and public/private not yet decided.
+- PUBLIC at `stoatworks-labs/mixerreturn`, and listed at
+  stoatworks-labs.com/software/mixerreturn/. Ships the AI disclaimer. Not yet tagged.
+  "Commit" = commit **and** push.
 
 ## The rule that matters
 **One block of delay, uniform across every sender, whatever order the host uses.** Uniform
@@ -49,6 +52,11 @@ will never catch it.
 **Sequential tests are not enough here, and that is not a theoretical point** — the
 concurrent test is what found the try-lock bug above, after every sequential test passed.
 Run the TSan build too (recipe in AGENTS.md §8); it is currently clean.
+
+`mrhost` covers what `mrtest` structurally cannot: it loads the built bundle and asks it for
+instances, confirming they share one registry across the plugin-format boundary. Note VST3
+hashes string param IDs to integers, so a host addresses parameters by **name**, not by the
+IDs in PluginParameters.h.
 
 Use **relative** tolerances when comparing sums: accumulating N floats in a different order
 than the reference legitimately differs by a couple of ULP.

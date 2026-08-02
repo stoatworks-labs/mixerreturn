@@ -105,19 +105,25 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ```
 
 VST3, AU and Standalone land under `build/`. `mrtest` is a headless numerical check of the
-summing bus, and `mrshot` regenerates the screenshots above:
+summing bus, `mrhost` runs that same check through the built VST3 as a host would, and
+`mrshot` regenerates the screenshots above:
 
 ```bash
 ./build/mrtest_artefacts/Release/mrtest
+```
+
+```bash
+./build/mrhost_artefacts/Release/mrhost build/MixerReturn_artefacts/Release/VST3/MixerReturn.vst3
 ```
 
 ## Status
 
 v0.1.0. The summing bus is verified numerically — including 24 senders with the processing
 order reshuffled on every block, and 17 instances processing concurrently on their own
-threads — it is clean under ThreadSanitizer, and `pluginval` passes at strictness 8. But it
-**has not been run inside SuperRack Performer, or against a real SQ**. Nothing here has
-been near a live show.
+threads — it is clean under ThreadSanitizer, `pluginval` passes at strictness 8, and the
+built VST3 has been loaded as a host loads it, confirming that instances created from one
+bundle really do share a bus. But it **has not been run inside SuperRack Performer, or
+against a real SQ**. Nothing here has been near a live show.
 
 That concurrent test earned its place: it found a real bug that every sequential test
 passed straight through. The audio path used to take a process-wide try-lock and skip the

@@ -71,8 +71,22 @@ Source/
   Diag/                      Vendored diagnostics module, copied unchanged across the fleet
 
 tests/mrtest.cpp             Headless numerical verification of the bus
+tests/mrhost.cpp             The same check, but run through the built .vst3 as a host
+tools/mrshot.cpp             Renders the editor to PNG for the documentation
 docs/DESIGN.md               Why it works this way, plus the console-side findings
 ```
+
+`mrtest` and `mrhost` answer different questions and you want both. `mrtest` constructs the
+processor directly, so it can drive concurrency and ordering precisely. `mrhost` loads the
+real bundle and asks it for instances, which is the only way to confirm the assumption the
+whole product rests on: that instances a host creates from one bundle **share one loaded
+copy of the registry**. If that were ever false — per-instance sandboxing, a bundle loaded
+twice — every instance would report a bus of one and the plugin would output silence while
+every control and meter carried on working.
+
+**VST3 parameter IDs are not the string IDs.** VST3 IDs are 32-bit integers, so JUCE hashes
+them on the way out: a host sees `bus` as `97920`. Names survive intact, which is why
+`mrhost` addresses parameters by name. Tell anyone trying to automate this by ID.
 
 ## 4. How it actually works
 

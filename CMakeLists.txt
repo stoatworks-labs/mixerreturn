@@ -122,3 +122,21 @@ target_compile_definitions(mrshot PUBLIC
     DIAG_GIT_REV="${MIXERRETURN_GIT_REV}")
 target_include_directories(mrshot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mrshot PRIVATE MixerReturn juce::juce_audio_utils)
+
+# --------------------------------------------------------------------------------------
+# mrhost — loads the built .vst3 as a host would and runs the summing check through it.
+#
+# mrtest constructs the processor directly, so it never crosses the plugin-format boundary.
+# The design assumes every instance a host creates from one bundle shares one loaded copy
+# of it; if that were false the plugin would silently do nothing, with every instance
+# reporting a bus of one. This is the only test that can tell.
+# --------------------------------------------------------------------------------------
+juce_add_console_app(mrhost PRODUCT_NAME "mrhost")
+juce_generate_juce_header(mrhost)
+target_sources(mrhost PRIVATE tests/mrhost.cpp)
+target_compile_definitions(mrhost PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_DISPLAY_SPLASH_SCREEN=0)
+target_link_libraries(mrhost PRIVATE juce::juce_audio_utils juce::juce_audio_processors)
