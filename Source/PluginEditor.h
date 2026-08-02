@@ -4,6 +4,7 @@
 
 #include "GUI/LevelBar.h"
 #include "PluginProcessor.h"
+#include "StoatworksAboutPanel.h"
 
 class MixerReturnAudioProcessorEditor : public juce::AudioProcessorEditor,
                                         private juce::Timer
@@ -33,6 +34,12 @@ private:
 
     LevelBar sendMeter, outputMeter;
     juce::Label statusLabel;
+
+    /* Vendored from stoatworks-backend/about - see StoatworksAboutPanel.h.
+       A child of the editor rather than a window of its own: a plugin must not
+       put a second top-level window on a host's screen. */
+    juce::TextButton aboutButton { "i" };
+    stoatworks::AboutPanel aboutPanel;
 
     std::unique_ptr<ComboAttachment>  busAttachment, outputModeAttachment;
     std::unique_ptr<ButtonAttachment> sendAttachment, muteAttachment;

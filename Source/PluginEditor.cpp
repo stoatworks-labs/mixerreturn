@@ -85,6 +85,14 @@ MixerReturnAudioProcessorEditor::MixerReturnAudioProcessorEditor (MixerReturnAud
     outputModeAttachment = std::make_unique<ComboAttachment> (state, mr::params::outputMode, outputModeBox);
     outputTrimAttachment = std::make_unique<SliderAttachment> (state, mr::params::outputTrim, outputTrimSlider);
 
+    addAndMakeVisible (aboutButton);
+    aboutButton.setTooltip ("About MixerReturn");
+    aboutButton.onClick = [this] { aboutPanel.setVisible (true); };
+
+    // Hidden until asked for, and on top of everything when it is shown.
+    addChildComponent (aboutPanel);
+    aboutPanel.setAlwaysOnTop (true);
+
     setSize (420, layout().totalHeight);
     startTimerHz (24);
 }
@@ -124,9 +132,14 @@ void MixerReturnAudioProcessorEditor::paint (juce::Graphics& g)
 
 void MixerReturnAudioProcessorEditor::resized()
 {
+    aboutPanel.setBounds (getLocalBounds());
+
     const auto& l = layout();
     const auto x = margin;
     const auto w = getWidth() - margin * 2;
+
+    // In the title strip that paint() draws, hard against the right margin.
+    aboutButton.setBounds (getWidth() - margin - 26, margin, 26, 22);
 
     busBox.setBounds (x, l.busY, w, comboH);
 
