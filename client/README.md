@@ -1,12 +1,39 @@
 # MixerReturn client — Phase 2 control surface
 
-The control surface for the MixerReturn **virtual audio device**: the device passes a
-physical interface's I/O straight through and adds virtual ports that can be summed and
-sent to chosen outputs. This is the screen you configure that from.
+The control surface for the MixerReturn **virtual audio device**. This is the screen you
+configure it from.
 
-Phase 1 — the plugin in the repository root — does the same summing job inside Waves
-SuperRack Performer. Phase 2 exists to cover what a plugin structurally cannot: SuperRack
-**SoundGrid** (which hosts no VST3), and routing between separate applications.
+## The routing model
+
+The device wraps a physical interface and presents to the host:
+
+| | |
+| --- | --- |
+| **Inputs** | the physical inputs, passed straight through |
+| **Outputs** | the physical outputs, passed straight through, **plus one `Sum n` port per input** |
+
+**The Sum ports are outputs as far as the host is concerned.** In SuperRack, a rack takes a
+passed-through physical input, and its output goes to one of two places:
+
+- a **passed-through physical output** — the rack behaves as an ordinary insert, straight
+  back to the desk;
+- a **Sum port** — the rack feeds the summing buses instead.
+
+That single choice, per channel, is the whole workflow. A strip used as an insert works as
+it always did; a strip used post-fader for Dugan goes to the sum.
+
+**One Sum port per rack is what makes this work at all.** SuperRack allows only one rack to
+patch to any given output I/O, so twenty-four racks cannot share one summing output. Giving
+each rack its own port and doing the summing inside the device sidesteps that completely.
+
+Sum ports are assigned to up to **eight stereo buses** through a crosspoint matrix, with
+console-style assign switches on each strip for the common case — the idiom is lifted from
+the numbered assign switches down a Midas channel strip. Each bus lands on a physical output
+pair, which is what returns to the desk as a group's External Input.
+
+Phase 1 — the plugin in the repository root — does the same summing job from inside
+SuperRack Performer, one instance per rack. The device does it a layer down, which means no
+plugin in the chain at all and the routing decision moves to where the rack is patched.
 
 ## Status: the UI, running on a simulated device
 
@@ -19,6 +46,10 @@ live when it isn't is worse than one that plainly admits it.
 One thing is kept honest even in simulation: **the summed return really is the sum of the
 inputs**, panned into L and R, rather than its own independent wobble. That is the entire
 product, and faking it separately would hide the only part worth looking at.
+
+Sum channel levels are not invented either: each is its corresponding input's post-fader
+signal, because that is literally what a rack patched this way would be sending. The bus
+meters are then the real sum of whatever is assigned to them.
 
 Save, Load, Setup and Diagnostics open panels that describe what they will do and state
 plainly that they are not wired up.
@@ -61,6 +92,12 @@ Two deliberate departures from the mockup, both for use rather than looks:
 - **Meter left, fader track right — everywhere.** The mockup mirrors the two in the
   summed-return panel. A surface that flips its own convention halfway across the screen
   is one somebody misreads at speed.
+
+The fader bank is three rows — INPUTS, OUTPUTS, SUM SENDS — rather than the mockup's two,
+because the Sum ports needed somewhere to live that wasn't buried among the physical
+outputs. The strip switches and the matrix are two views of one set of assignments, and
+both repaint from the same state: an open matrix showing a crosspoint that was just
+switched off on a strip is exactly the sort of thing that gets patched wrong.
 
 Each strip's number is its fader position; the return panel's readout is a peak-holding
 meter of the summed bus, so the two are different kinds of figure by design.

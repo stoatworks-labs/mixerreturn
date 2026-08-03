@@ -287,6 +287,138 @@ main {
 
 .strip.clipping .value { color: var(--red); }
 
+/* ---- console-style bus assign ------------------------------------------- */
+
+/* Lifted from the numbered assign switches down a Midas channel strip: a fixed grid
+   where each bus always sits in the same place, so it is read by position rather than
+   by looking. Two columns rather than one because a three-high fader bank has no room
+   for a column of eight. */
+.busassign {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px;
+  margin-top: 6px;
+  padding: 0 8px;
+  width: 100%;
+  max-width: 78px;
+}
+
+.busbtn {
+  font: inherit;
+  font-size: 9px;
+  line-height: 1;
+  padding: 3px 0;
+  text-align: center;
+  color: var(--text-dim);
+  background: #14100d;
+  border: 1px solid #000;
+  border-top-color: #ffffff12;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.busbtn:hover { background: #1e1813; color: var(--text); }
+
+.busbtn[aria-pressed="true"] {
+  background: var(--amber);
+  border-color: #00000060;
+  color: #241d15;
+  box-shadow: 0 0 5px #deab4f66;
+}
+
+/* ---- bus picker in the return panel -------------------------------------- */
+
+.buspicker {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.buspick {
+  font: inherit;
+  font-size: 9px;
+  padding: 4px 0;
+  color: var(--text-dim);
+  background: #14100d;
+  border: 1px solid #000;
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.buspick .lvl {
+  position: absolute;
+  left: 0; bottom: 0; right: 0;
+  background: var(--green);
+  opacity: 0.5;
+  height: 0;
+}
+
+.buspick span { position: relative; }
+
+.buspick[aria-pressed="true"] {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+
+.buspick.unassigned { opacity: 0.45; }
+
+.returndest {
+  flex: 0 0 auto;
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* ---- crosspoint matrix --------------------------------------------------- */
+
+.matrixgrid {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 4px;
+}
+
+.matrixgrid .rowlabel {
+  font-size: 11px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+  white-space: nowrap;
+}
+
+.matrixgrid .collabel {
+  font-size: 10px;
+  color: var(--amber);
+  text-align: center;
+  padding-bottom: 2px;
+}
+
+.matrixgrid .xpt {
+  font: inherit;
+  font-size: 9px;
+  color: transparent;
+  width: 100%;
+  height: 22px;
+  background: #14100d;
+  border: 1px solid #000;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.matrixgrid .xpt:hover { background: #1e1813; }
+
+.matrixgrid .xpt[aria-pressed="true"] {
+  background: var(--amber);
+  color: #241d15;
+  box-shadow: 0 0 5px #deab4f55;
+}
+
 /* ---- summed return ------------------------------------------------------- */
 
 .returnpanel {

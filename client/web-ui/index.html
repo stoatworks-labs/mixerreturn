@@ -13,6 +13,7 @@
     <button type="button" data-menu="save">Save</button>
     <button type="button" data-menu="load">Load</button>
     <button type="button" data-menu="setup">Setup</button>
+    <button type="button" data-menu="matrix">Matrix</button>
     <button type="button" data-menu="diagnostics">Diagnostics</button>
     <button type="button" data-menu="about">About</button>
   </nav>
@@ -35,6 +36,15 @@
       <h2 class="rackhead"><button type="button" class="disclose" aria-expanded="true"><span class="arrow">&#9656;</span> OUTPUTS</button></h2>
       <div class="strips" id="strips-outputs"></div>
     </section>
+
+    <!-- Sum ports are OUTPUTS as far as the host is concerned: SuperRack patches a rack's
+         output into one of these instead of into a physical output. They sit in their own
+         row because what you do with them is a different decision from passing audio
+         straight back to the desk. -->
+    <section class="rack" id="rack-sum">
+      <h2 class="rackhead"><button type="button" class="disclose" aria-expanded="true"><span class="arrow">&#9656;</span> SUM SENDS</button></h2>
+      <div class="strips" id="strips-sum"></div>
+    </section>
   </div>
 
   <aside class="returnpanel" id="returnpanel">
@@ -42,7 +52,9 @@
     <span class="screw bl"></span><span class="screw br"></span>
 
     <h2 class="returnhead">SUMMED<br>RETURN</h2>
+    <div class="buspicker" id="buspicker"></div>
     <div class="returnstrips" id="return-strips"></div>
+    <div class="returndest" id="return-dest">unassigned</div>
     <div class="returnreadout" id="return-readout">-&#8734; dBFS</div>
   </aside>
 </main>
