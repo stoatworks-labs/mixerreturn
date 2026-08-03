@@ -189,11 +189,12 @@ main {
   margin-top: 1px;
 }
 
-/* The fader: meter bar on the left, fader track on the right, handle across both.
-   The mockup mirrors these two in the return panel; they are kept the same way round
-   everywhere here, because a surface that flips its own convention halfway is a
-   surface someone misreads at speed. */
-/* Holds the fader and, on Sum strips, the assign column beside it. */
+/* Meter bars on the left, fader track on the right, handle across both. The mockup
+   mirrors these two in the return panel; they are kept the same way round everywhere
+   here, because a surface that flips its own convention halfway is a surface someone
+   misreads at speed.
+
+   Holds the fader and, on Sum strips, the assign column beside it. */
 .fadergroup {
   flex: 1 1 auto;
   min-height: 0;
@@ -204,25 +205,32 @@ main {
   margin: 8px 0 6px;
 }
 
+/* Laid out as a flex row rather than by absolute offsets, because the number of meter
+   bars is a property of the channel: one for a mono channel, two for a stereo one. Half a
+   stereo meter standing in for a mono channel is a misreading waiting to happen. */
 .fader {
   position: relative;
   flex: 0 0 auto;
   min-height: 0;
-  width: calc(var(--bar-w) * 2 + var(--bar-gap) + 26px);
+  display: flex;
+  align-items: stretch;
+  gap: var(--bar-gap);
+  padding-right: 13px;   /* the tick column, which is positioned over this */
   touch-action: none;
   cursor: ns-resize;
 }
 
+.meters {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
 .bar {
-  position: absolute;
-  top: 0;
-  bottom: 0;
+  position: relative;
   width: var(--bar-w);
   background: var(--trough);
 }
-
-.bar.meter { left: 10px; }
-.bar.track { left: calc(10px + var(--bar-w) + var(--bar-gap)); }
 
 /* The whole colour scale lives on the meter; an opaque mask hides the unlit part
    from the top down. That keeps a given dB at a fixed height without any pixel maths. */
@@ -262,7 +270,7 @@ main {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(10px + var(--bar-w) * 2 + var(--bar-gap) + 5px);
+  right: 0;
   width: 8px;
 }
 
@@ -275,10 +283,12 @@ main {
   opacity: 0.65;
 }
 
+/* Spans the bars but stops short of the tick column, so it stays put whether the channel
+   shows one meter bar or two. */
 .cap {
   position: absolute;
-  left: calc(10px - 4px);
-  width: var(--cap-w);
+  left: -4px;
+  right: 9px;
   height: var(--cap-h);
   margin-bottom: calc(var(--cap-h) / -2);
   background: var(--cap);
@@ -474,8 +484,8 @@ main {
 }
 
 .returnstrips .strip {
-  flex: 0 0 70px;
-  min-width: 70px;
+  flex: 0 0 auto;
+  min-width: 0;
   border-right: 0;
   background: none;
   padding-top: 0;

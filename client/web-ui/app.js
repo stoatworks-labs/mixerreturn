@@ -27,7 +27,16 @@
 
    Sum ports are assigned to up to eight stereo buses through a crosspoint matrix, with
    console-style assign switches on each strip for the common case. Each bus lands on a
-   physical output pair, which is what returns to the desk as a group's External Input. */
+   physical output pair, which is what returns to the desk as a group's External Input.
+
+   ---------------------------------------------------------------------------
+   Channel format
+   ---------------------------------------------------------------------------
+
+   A channel is mono or stereo, and a stereo channel is one strip with one fader and two
+   meter bars — not two strips, and not one bar of a stereo pair standing in for a mono
+   channel. Ports pair up the way a console pairs them: 1-2, 3-4, and so on. Sum channels
+   inherit their input's format, because a stereo rack has to land somewhere stereo. */
 
 const MIN_DB = -60;   // bottom of every meter and the foot of the fader travel ("-inf")
 const MAX_DB = 10;    // top of the fader travel, matching the plugin's trim range
@@ -39,7 +48,6 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const dbToGain = db => (db <= MIN_DB ? 0 : Math.pow(10, db / 20));
 const gainToDb = g => (g <= 0.000001 ? -Infinity : 20 * Math.log10(g));
 
-/** Meter geometry: linear in dB, which is what evenly spaced ticks imply. */
 const meterFraction = db => clamp((db - MIN_DB) / (METER_TOP_DB - MIN_DB), 0, 1);
 const faderFraction = db => clamp((db - MIN_DB) / (MAX_DB - MIN_DB), 0, 1);
 const fractionToFaderDb = f => MIN_DB + clamp(f, 0, 1) * (MAX_DB - MIN_DB);
@@ -56,28 +64,65 @@ const Device = {
   simulated: true,
   name: 'Simulated 8x8 interface',
 
+  /** The device's physical ports, before any mono/stereo pairing is applied. */
   describe() {
-    // Pans are a simulation nicety so the stereo bus meters are two different pictures.
-    // In the real device this becomes a per-crosspoint value.
-    const pans = [-0.7, -0.3, 0.3, 0.7, -0.9, -0.2, 0.4, 0.85];
-
     const mk = (kind, n, offset) =>
       Array.from({ length: n }, (_, i) => ({
-        name: `${kind} ${i + 1}`,
+        kind,
+        kindIndex: i + 1,
         number: offset + i + 1,
-        pan: pans[(offset + i) % pans.length],
       }));
 
-    const inputs = [...mk('Mic', 4, 0), ...mk('Line', 4, 4)];
-
     return {
-      inputs,
+      inputs:  [...mk('Mic', 4, 0), ...mk('Line', 4, 4)],
       outputs: [...mk('Mic', 4, 0), ...mk('Line', 4, 4)],
-      // One Sum port per input, matching its format.
-      sums: inputs.map((ch, i) => ({ name: `Sum ${i + 1}`, number: i + 1, pan: ch.pan })),
     };
   },
 };
+
+const ports = Device.describe();
+const NUM_PAIRS = Math.floor(ports.inputs.length / 2);
+
+// Which port pairs are ganged into a stereo channel. Pair p covers ports 2p and 2p+1.
+const inputStereo = Array(NUM_PAIRS).fill(false);
+const outputStereo = Array(NUM_PAIRS).fill(false);
+
+// Simulation only: gives a stereo bus two different pictures instead of one drawn twice.
+const PANS = [-0.7, -0.3, 0.3, 0.7, -0.9, -0.2, 0.4, 0.85];
+
+/** Turns a flat port list plus pairing flags into channel specs. */
+function buildChannels(portList, stereoFlags) {
+  const channels = [];
+
+  for (let p = 0; p < portList.length; p += 2) {
+    const a = portList[p];
+    const b = portList[p + 1];
+    const pairIndex = p / 2;
+
+    if (b && stereoFlags[pairIndex]) {
+      channels.push({
+        name: `${a.kind} ${a.kindIndex}-${b.kindIndex}`,
+        number: a.number,
+        format: 'stereo',
+        ports: [p, p + 1],
+        pan: 0,
+      });
+    } else {
+      for (const [k, port] of [[p, a], [p + 1, b]]) {
+        if (!port) continue;
+        channels.push({
+          name: `${port.kind} ${port.kindIndex}`,
+          number: port.number,
+          format: 'mono',
+          ports: [k],
+          pan: PANS[k % PANS.length],
+        });
+      }
+    }
+  }
+
+  return channels;
+}
 
 /** Smoothly wandering level in dB, so the meters read like programme rather than noise. */
 class SignalSim {
@@ -97,11 +142,12 @@ class SignalSim {
 /* ------------------------------------------------------------------------- */
 
 class Strip {
-  constructor(spec, index, opts = {}) {
+  constructor(spec, opts = {}) {
     this.spec = spec;
-    this.sim = new SignalSim(index + (opts.seedOffset || 0));
+    this.width = spec.ports.length;                 // 1 for mono, 2 for stereo
+    this.sims = spec.ports.map(i => new SignalSim(i + (opts.seedOffset || 0)));
+    this.levels = spec.ports.map(() => MIN_DB);
     this.faderDb = opts.faderDb !== undefined ? opts.faderDb : 0;
-    this.levelDb = MIN_DB;
     this.compact = !!opts.compact;
 
     this.el = document.createElement('div');
@@ -112,7 +158,9 @@ class Strip {
       <div class="fadergroup">
         <div class="fader" tabindex="0" role="slider"
              aria-valuemin="${MIN_DB}" aria-valuemax="${MAX_DB}">
-          <div class="bar meter"><div class="mask"></div></div>
+          <div class="meters">
+            ${spec.ports.map(() => '<div class="bar meter"><div class="mask"></div></div>').join('')}
+          </div>
           <div class="bar track"></div>
           <div class="ticks"></div>
           <div class="cap"></div>
@@ -121,7 +169,10 @@ class Strip {
       <div class="value"></div>`;
 
     this.el.querySelector('.name').textContent = spec.name;
-    if (!this.compact) this.el.querySelector('.num').textContent = String(spec.number);
+    if (!this.compact) {
+      this.el.querySelector('.num').textContent =
+        spec.format === 'stereo' ? `${spec.number}-${spec.number + 1}` : String(spec.number);
+    }
 
     const ticks = this.el.querySelector('.ticks');
     for (const pct of [0, 25, 50, 75, 100]) {
@@ -131,7 +182,7 @@ class Strip {
     }
 
     this.faderEl = this.el.querySelector('.fader');
-    this.maskEl = this.el.querySelector('.mask');
+    this.maskEls = [...this.el.querySelectorAll('.mask')];
     this.capEl = this.el.querySelector('.cap');
     this.valueEl = this.el.querySelector('.value');
 
@@ -179,16 +230,18 @@ class Strip {
     this.faderEl.setAttribute('aria-valuetext', formatFader(this.faderDb));
   }
 
-  showLevel(db) {
-    this.levelDb = db;
-    this.maskEl.style.height = `${(1 - meterFraction(db)) * 100}%`;
-    this.el.classList.toggle('clipping', db > 0);
-    return db;
+  showLevels(levels) {
+    this.levels = levels;
+    for (const [i, mask] of this.maskEls.entries())
+      mask.style.height = `${(1 - meterFraction(levels[i])) * 100}%`;
+    this.el.classList.toggle('clipping', levels.some(l => l > 0));
+    return levels;
   }
 
   /** Post-fader level, which is what a meter beside a fader should be showing. */
   update(t) {
-    return this.showLevel(this.sim.levelDb(t) + Math.min(this.faderDb, MAX_DB));
+    const trim = Math.min(this.faderDb, MAX_DB);
+    return this.showLevels(this.sims.map(s => s.levelDb(t) + trim));
   }
 }
 
@@ -197,8 +250,8 @@ class Strip {
     Its level is not invented — it is the corresponding input's post-fader signal, because
     that is literally what would be coming back out of a rack patched this way. */
 class SumStrip extends Strip {
-  constructor(spec, index, source) {
-    super(spec, index, { faderDb: 0 });
+  constructor(spec, source) {
+    super(spec, { faderDb: 0 });
     this.source = source;
     this.buses = new Set();
 
@@ -230,61 +283,83 @@ class SumStrip extends Strip {
     onRoutingChanged();
   }
 
-  update(t) {
-    // The rack's own output, then this port's send trim.
-    return this.showLevel(this.source.levelDb + Math.min(this.faderDb, MAX_DB));
+  update() {
+    const trim = Math.min(this.faderDb, MAX_DB);
+    return this.showLevels(this.source.levels.map(l => l + trim));
   }
 }
 
-/** Bus return strips are handed a level rather than inventing one. */
-class ReturnStrip extends Strip {
-  update(_t, levelDb) {
-    return this.showLevel(levelDb);
+/** One stereo strip per bus, handed its levels rather than inventing them. */
+class BusStrip extends Strip {
+  update(_t, levels) {
+    return this.showLevels(levels);
   }
 }
 
 /* ------------------------------------------------------------------------- */
+/* State                                                                      */
+/* ------------------------------------------------------------------------- */
 
 const DEFAULT_FADERS = [-13, -5, -26, -17, -4, -29, -11, -21];
-
-const desc = Device.describe();
-
-const inputStrips = desc.inputs.map((s, i) =>
-  new Strip(s, i, { faderDb: DEFAULT_FADERS[i % DEFAULT_FADERS.length] }));
-
-const outputStrips = desc.outputs.map((s, i) =>
-  new Strip(s, i, { seedOffset: 11, faderDb: DEFAULT_FADERS[i % DEFAULT_FADERS.length] }));
-
-const sumStrips = desc.sums.map((s, i) => new SumStrip(s, i, inputStrips[i]));
-
-const returnStrips = [
-  new ReturnStrip({ name: 'L', number: 1 }, 0, { compact: true, faderDb: 0 }),
-  new ReturnStrip({ name: 'R', number: 2 }, 1, { compact: true, faderDb: 0 }),
-];
 
 const buses = Array.from({ length: NUM_BUSES }, (_, i) => ({
   name: `Bus ${i + 1}`,
   destination: null,
-  levelL: MIN_DB,
-  levelR: MIN_DB,
+  levels: [MIN_DB, MIN_DB],
 }));
 
+let inputStrips = [];
+let outputStrips = [];
+let sumStrips = [];
 let selectedBus = 0;
 
-document.getElementById('strips-inputs').append(...inputStrips.map(s => s.el));
-document.getElementById('strips-outputs').append(...outputStrips.map(s => s.el));
-document.getElementById('strips-sum').append(...sumStrips.map(s => s.el));
-document.getElementById('return-strips').append(...returnStrips.map(s => s.el));
+// Assignments survive a channel-format change by being keyed on the Sum channel's first
+// port rather than on its position in the list, which moves when pairs gang up.
+let savedAssignments = new Map();
 
-document.getElementById('device-name').textContent = Device.name;
-document.getElementById('sim-chip').hidden = !Device.simulated;
-document.getElementById('status-text').textContent = Device.simulated
-  ? 'Simulated device — no driver attached. Levels and channel names are generated.'
-  : `Connected to ${Device.name}`;
+const busStrip = new BusStrip(
+  { name: 'L / R', number: 1, format: 'stereo', ports: [0, 1] },
+  { compact: true, faderDb: 0 });
+
+document.getElementById('return-strips').appendChild(busStrip.el);
+
+const elInputs = document.getElementById('strips-inputs');
+const elOutputs = document.getElementById('strips-outputs');
+const elSum = document.getElementById('strips-sum');
+const pickerEl = document.getElementById('buspicker');
+const destEl = document.getElementById('return-dest');
+const readout = document.getElementById('return-readout');
+
+function rebuildChannels() {
+  for (const s of sumStrips) savedAssignments.set(s.spec.ports[0], new Set(s.buses));
+
+  const inputChannels = buildChannels(ports.inputs, inputStereo);
+  const outputChannels = buildChannels(ports.outputs, outputStereo);
+
+  inputStrips = inputChannels.map((c, i) =>
+    new Strip(c, { faderDb: DEFAULT_FADERS[i % DEFAULT_FADERS.length] }));
+
+  outputStrips = outputChannels.map((c, i) =>
+    new Strip(c, { seedOffset: 11, faderDb: DEFAULT_FADERS[i % DEFAULT_FADERS.length] }));
+
+  // One Sum port per input channel, matching its format.
+  sumStrips = inputChannels.map((c, i) => new SumStrip(
+    { ...c, name: `Sum ${i + 1}` }, inputStrips[i]));
+
+  for (const s of sumStrips) {
+    const saved = savedAssignments.get(s.spec.ports[0]);
+    for (const b of (saved && saved.size ? saved : [0])) s.toggleBus(b, true);
+  }
+
+  elInputs.replaceChildren(...inputStrips.map(s => s.el));
+  elOutputs.replaceChildren(...outputStrips.map(s => s.el));
+  elSum.replaceChildren(...sumStrips.map(s => s.el));
+
+  onRoutingChanged();
+}
 
 /* ---- bus picker ---------------------------------------------------------- */
 
-const pickerEl = document.getElementById('buspicker');
 const busPicks = buses.map((bus, i) => {
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -301,11 +376,9 @@ const busPicks = buses.map((bus, i) => {
   return btn;
 });
 
-const destEl = document.getElementById('return-dest');
-const readout = document.getElementById('return-readout');
-
 function renderBusDestination() {
   const bus = buses[selectedBus];
+  busStrip.el.querySelector('.name').textContent = bus.name;
   destEl.textContent = bus.destination
     ? `${bus.name} → ${bus.destination}`
     : `${bus.name} → unassigned`;
@@ -328,13 +401,14 @@ function onRoutingChanged() {
   }
 }
 
-// A sensible starting point rather than a blank matrix: everything into bus 1, which is
-// the Dugan case the device exists for. Has to come after busPicks exists, because
-// assigning a bus repaints the picker.
-for (const s of sumStrips) s.toggleBus(0, true);
-
+rebuildChannels();
 renderBusDestination();
-onRoutingChanged();
+
+document.getElementById('device-name').textContent = Device.name;
+document.getElementById('sim-chip').hidden = !Device.simulated;
+document.getElementById('status-text').textContent = Device.simulated
+  ? 'Simulated device — no driver attached. Levels and channel names are generated.'
+  : `Connected to ${Device.name}`;
 
 /* ---- rack disclosure ----------------------------------------------------- */
 
@@ -368,7 +442,7 @@ function buildMatrix() {
   for (const [si, strip] of sumStrips.entries()) {
     const label = document.createElement('div');
     label.className = 'rowlabel';
-    label.textContent = strip.spec.name;
+    label.textContent = `${strip.spec.name}${strip.width === 2 ? '  (st)' : ''}`;
     grid.appendChild(label);
 
     for (let b = 0; b < NUM_BUSES; b++) {
@@ -399,11 +473,66 @@ function buildMatrix() {
   return wrap;
 }
 
+/** Mono/stereo per port pair, the way a console gangs 1-2, 3-4 and so on. */
+function buildFormatEditor() {
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<p>Ports pair up as a console pairs them. A stereo channel is one strip
+    with one fader and two meter bars, not two strips.</p>
+    <p class="dim">Sum channels follow their input's format — a stereo rack has to land
+    somewhere stereo.</p>`;
+
+  for (const [label, flags] of [['Inputs', inputStereo], ['Outputs', outputStereo]]) {
+    const h = document.createElement('h3');
+    h.textContent = label;
+    wrap.appendChild(h);
+
+    const grid = document.createElement('div');
+    grid.className = 'matrixgrid';
+    grid.style.gridTemplateColumns = 'auto 70px 70px';
+
+    for (let p = 0; p < NUM_PAIRS; p++) {
+      const a = ports[label.toLowerCase()][p * 2];
+      const b = ports[label.toLowerCase()][p * 2 + 1];
+
+      const name = document.createElement('div');
+      name.className = 'rowlabel';
+      name.textContent = `${a.kind} ${a.kindIndex}/${b.kindIndex}`;
+      grid.appendChild(name);
+
+      for (const [text, wantStereo] of [['Mono', false], ['Stereo', true]]) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'xpt';
+        btn.style.color = 'inherit';
+        btn.textContent = text;
+        btn.setAttribute('aria-pressed', String(flags[p] === wantStereo));
+        btn.addEventListener('click', () => {
+          flags[p] = wantStereo;
+          rebuildChannels();
+          for (const sib of grid.children) {
+            if (sib.dataset && sib.dataset.pair === String(p)) {
+              sib.setAttribute('aria-pressed', String(flags[p] === (sib.dataset.stereo === 'true')));
+            }
+          }
+        });
+        btn.dataset.pair = String(p);
+        btn.dataset.stereo = String(wantStereo);
+        grid.appendChild(btn);
+      }
+    }
+
+    wrap.appendChild(grid);
+  }
+
+  return wrap;
+}
+
 const SHEETS = {
   save: {
     title: 'Save',
-    body: () => `<p>Writes the wrapped device, the channel names, fader positions and the
-           full Sum-to-bus crosspoint matrix to a file the driver reads on start.</p>
+    body: () => `<p>Writes the wrapped device, the channel formats and names, fader
+           positions and the full Sum-to-bus crosspoint matrix to a file the driver reads
+           on start.</p>
            <p class="dim">Not wired up: there is no driver to write a configuration for yet.</p>`,
   },
   load: {
@@ -411,17 +540,7 @@ const SHEETS = {
     body: () => `<p>Loads a saved configuration and applies it to the attached device.</p>
            <p class="dim">Not wired up: there is no driver to apply a configuration to yet.</p>`,
   },
-  setup: {
-    title: 'Setup',
-    body: () => `<p>Picks the physical device to wrap, and where each bus lands.</p>
-           <ul>
-             <li>Wrapped device &mdash; <span class="dim">none; a simulated 8&times;8 interface</span></li>
-             <li>Sample rate &mdash; <span class="dim">96 kHz, to match an SQ core</span></li>
-             <li>Sum ports &mdash; <span class="dim">${desc.sums.length}, one per input</span></li>
-             <li>Bus destinations &mdash; <span class="dim">unassigned</span></li>
-           </ul>
-           <p class="dim">Not wired up: enumerating real devices needs the driver.</p>`,
-  },
+  setup: { title: 'Channel format', node: buildFormatEditor },
   matrix: { title: 'Sum → bus matrix', node: buildMatrix },
   diagnostics: {
     title: 'Diagnostics',
@@ -433,8 +552,8 @@ const SHEETS = {
     title: 'About MixerReturn',
     body: () => `<p>Control surface for the MixerReturn virtual audio device. It wraps a
            physical interface, passes its I/O straight through, and adds one
-           <strong>Sum</strong> port per input &mdash; outputs, as far as the host is
-           concerned.</p>
+           <strong>Sum</strong> port per input channel &mdash; outputs, as far as the host
+           is concerned.</p>
            <p>In SuperRack a rack's output goes either to a passed-through physical output,
            behaving as an ordinary insert, or to a Sum port, which feeds one of eight stereo
            buses. Each bus lands on a physical output pair and returns to the desk as a
@@ -442,6 +561,10 @@ const SHEETS = {
            <p>One Sum port per rack is what makes it work: SuperRack allows only one rack
            per output I/O, so racks cannot share a summing output. Giving each its own port
            and summing in the device sidesteps that.</p>
+           <p class="dim">Target host is SuperRack <strong>Performer</strong>. SuperRack
+           SoundGrid takes its I/O from SoundGrid hardware rather than a CoreAudio or ASIO
+           device, so it is not a target &mdash; though the SoundGrid driver itself is just
+           another interface, and could in principle be the thing wrapped.</p>
            <p class="dim">Stoatworks Labs &middot; MIT &middot; AI-assisted, human-reviewed.</p>`,
   },
 };
@@ -489,34 +612,41 @@ function frame(now) {
   for (const strip of outputStrips) strip.update(t);
   for (const strip of sumStrips) strip.update(t);
 
-  // Each bus is the sum of the Sum ports assigned to it, in linear gain, panned into the
-  // stereo pair — the same arithmetic the device will do.
+  // Each bus is the sum of the Sum ports assigned to it, in linear gain — the same
+  // arithmetic the device will do. A mono port is panned into the pair; a stereo one
+  // already has a side each.
   for (const bus of buses) { bus.gL = 0; bus.gR = 0; }
 
   for (const strip of sumStrips) {
     if (strip.buses.size === 0) continue;
-    const g = dbToGain(strip.levelDb);
-    const pan = strip.spec.pan || 0;
-    const gl = g * Math.cos((pan + 1) * Math.PI / 4);
-    const gr = g * Math.sin((pan + 1) * Math.PI / 4);
+
+    let gl;
+    let gr;
+
+    if (strip.width === 2) {
+      gl = dbToGain(strip.levels[0]);
+      gr = dbToGain(strip.levels[1]);
+    } else {
+      const g = dbToGain(strip.levels[0]);
+      const pan = strip.spec.pan || 0;
+      gl = g * Math.cos((pan + 1) * Math.PI / 4);
+      gr = g * Math.sin((pan + 1) * Math.PI / 4);
+    }
+
     for (const b of strip.buses) { buses[b].gL += gl; buses[b].gR += gr; }
   }
 
-  for (const bus of buses) {
-    bus.levelL = gainToDb(bus.gL);
-    bus.levelR = gainToDb(bus.gR);
-  }
+  for (const bus of buses) bus.levels = [gainToDb(bus.gL), gainToDb(bus.gR)];
 
   for (const [i, btn] of busPicks.entries()) {
-    const peak = Math.max(buses[i].levelL, buses[i].levelR);
+    const peak = Math.max(buses[i].levels[0], buses[i].levels[1]);
     btn.querySelector('.lvl').style.height = `${meterFraction(peak) * 100}%`;
   }
 
   const shown = buses[selectedBus];
-  returnStrips[0].update(t, shown.levelL);
-  returnStrips[1].update(t, shown.levelR);
+  busStrip.update(t, shown.levels);
 
-  const peak = Math.max(shown.levelL, shown.levelR);
+  const peak = Math.max(shown.levels[0], shown.levels[1]);
   if (peak > peakHoldDb || now > peakHoldUntil) {
     peakHoldDb = peak;
     peakHoldUntil = now + 900;

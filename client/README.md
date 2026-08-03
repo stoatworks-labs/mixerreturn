@@ -27,9 +27,19 @@ patch to any given output I/O, so twenty-four racks cannot share one summing out
 each rack its own port and doing the summing inside the device sidesteps that completely.
 
 Sum ports are assigned to up to **eight stereo buses** through a crosspoint matrix, with
-console-style assign switches on each strip for the common case — the idiom is lifted from
-the numbered assign switches down a Midas channel strip. Each bus lands on a physical output
-pair, which is what returns to the desk as a group's External Input.
+console-style assign switches on each strip for the common case — a numbered column down
+the right of the strip, the idiom lifted from a Midas channel strip. Each bus lands on a
+physical output pair, which is what returns to the desk as a group's External Input.
+
+## Channel format
+
+A channel is **mono or stereo**, set per port pair under Setup, ganging 1-2, 3-4 and so on
+the way a console does. A stereo channel is **one strip, one fader, two meter bars** — not
+two strips, and never one bar of a stereo pair standing in for a mono channel. Ganging a
+pair drops the strip count by one while the port count stays put.
+
+Sum channels inherit their input's format, because a stereo rack has to land somewhere
+stereo. A mono Sum port is panned into its buses; a stereo one already has a side each.
 
 Phase 1 — the plugin in the repository root — does the same summing job from inside
 SuperRack Performer, one instance per rack. The device does it a layer down, which means no
