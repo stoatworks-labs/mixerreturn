@@ -18,16 +18,16 @@ insert slot or a second channel strip per mic.
 
 ## Download
 
-**[v0.1.0](https://github.com/stoatworks-labs/mixerreturn/releases/tag/v0.1.0)** — prebuilt for macOS, Windows and Linux. Pick your platform:
+**[v0.2.0](https://github.com/stoatworks-labs/mixerreturn/releases/tag/v0.2.0)** — prebuilt for macOS, Windows and Linux. Pick your platform:
 
 <details>
 <summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| Universal (Apple Silicon + Intel) · .dmg disk image | [`mixerreturn-0.1.0-macos-universal.dmg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.1.0/mixerreturn-0.1.0-macos-universal.dmg) | 11 MB |
-| Universal (Apple Silicon + Intel) · .pkg installer | [`mixerreturn-0.1.0-macos-universal.pkg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.1.0/mixerreturn-0.1.0-macos-universal.pkg) | 9.7 MB |
-| Universal (Apple Silicon + Intel) · .zip archive | [`mixerreturn-macos-universal.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-macos-universal.zip) | 9.4 MB |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`mixerreturn-0.2.0-macos-universal.dmg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-macos-universal.dmg) | 11 MB |
+| Universal (Apple Silicon + Intel) · .pkg installer | [`mixerreturn-0.2.0-macos-universal.pkg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-macos-universal.pkg) | 9.8 MB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`mixerreturn-macos-universal.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-macos-universal.zip) | 9.5 MB |
 
 </details>
 
@@ -36,9 +36,9 @@ insert slot or a second channel strip per mic.
 
 | Build | Download | Size |
 | --- | --- | --- |
-| x64 · .exe installer | [`mixerreturn-0.1.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.1.0/mixerreturn-0.1.0-windows-x86_64-setup.exe) | 2.8 MB |
-| ARM64 · .exe installer | [`mixerreturn-0.1.0-windows-aarch64-setup.exe`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.1.0/mixerreturn-0.1.0-windows-aarch64-setup.exe) | 2.6 MB |
-| x64 · .zip archive | [`mixerreturn-windows-x86_64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-windows-x86_64.zip) | 5.0 MB |
+| x64 · .exe installer | [`mixerreturn-0.2.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-windows-x86_64-setup.exe) | 2.8 MB |
+| ARM64 · .exe installer | [`mixerreturn-0.2.0-windows-aarch64-setup.exe`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-windows-aarch64-setup.exe) | 2.6 MB |
+| x64 · .zip archive | [`mixerreturn-windows-x86_64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-windows-x86_64.zip) | 5.1 MB |
 | ARM64 · .zip archive | [`mixerreturn-windows-aarch64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-windows-aarch64.zip) | 4.9 MB |
 
 </details>
@@ -48,10 +48,10 @@ insert slot or a second channel strip per mic.
 
 | Build | Download | Size |
 | --- | --- | --- |
-| x64 · .deb package (Debian/Ubuntu) | [`mixerreturn_0.1.0_amd64.deb`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.1.0/mixerreturn_0.1.0_amd64.deb) | 2.1 MB |
-| ARM64 · .deb package (Debian/Ubuntu) | [`mixerreturn_0.1.0_arm64.deb`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.1.0/mixerreturn_0.1.0_arm64.deb) | 2.1 MB |
-| x64 · .rpm package (Fedora/RHEL) | [`mixerreturn-0.1.0-1.x86_64.rpm`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.1.0/mixerreturn-0.1.0-1.x86_64.rpm) | 2.1 MB |
-| ARM64 · .rpm package (Fedora/RHEL) | [`mixerreturn-0.1.0-1.aarch64.rpm`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.1.0/mixerreturn-0.1.0-1.aarch64.rpm) | 2.2 MB |
+| x64 · .deb package (Debian/Ubuntu) | [`mixerreturn_0.2.0_amd64.deb`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn_0.2.0_amd64.deb) | 2.1 MB |
+| ARM64 · .deb package (Debian/Ubuntu) | [`mixerreturn_0.2.0_arm64.deb`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn_0.2.0_arm64.deb) | 2.2 MB |
+| x64 · .rpm package (Fedora/RHEL) | [`mixerreturn-0.2.0-1.x86_64.rpm`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-1.x86_64.rpm) | 2.2 MB |
+| ARM64 · .rpm package (Fedora/RHEL) | [`mixerreturn-0.2.0-1.aarch64.rpm`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-1.aarch64.rpm) | 2.2 MB |
 | x64 · .zip archive | [`mixerreturn-linux-x86_64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-linux-x86_64.zip) | 4.2 MB |
 | ARM64 · .zip archive | [`mixerreturn-linux-aarch64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-linux-aarch64.zip) | 4.2 MB |
 
