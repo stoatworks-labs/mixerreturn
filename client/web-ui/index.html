@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MixerReturn Control Surface</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="menubar">
+  <nav class="menu">
+    <button type="button" data-menu="save">Save</button>
+    <button type="button" data-menu="load">Load</button>
+    <button type="button" data-menu="setup">Setup</button>
+    <button type="button" data-menu="diagnostics">Diagnostics</button>
+    <button type="button" data-menu="about">About</button>
+  </nav>
+  <div class="titleblock">
+    <!-- Until the driver exists there is no device to read levels from, and a control
+         surface that looks live but isn't is the one thing worth being loud about. -->
+    <span class="simchip" id="sim-chip">SIMULATED</span>
+    <span class="devicename" id="device-name">No device</span>
+  </div>
+</header>
+
+<main>
+  <div class="channels" id="channels">
+    <section class="rack" id="rack-inputs">
+      <h2 class="rackhead"><button type="button" class="disclose" aria-expanded="true"><span class="arrow">&#9656;</span> INPUTS</button></h2>
+      <div class="strips" id="strips-inputs"></div>
+    </section>
+
+    <section class="rack" id="rack-outputs">
+      <h2 class="rackhead"><button type="button" class="disclose" aria-expanded="true"><span class="arrow">&#9656;</span> OUTPUTS</button></h2>
+      <div class="strips" id="strips-outputs"></div>
+    </section>
+  </div>
+
+  <aside class="returnpanel" id="returnpanel">
+    <span class="screw tl"></span><span class="screw tr"></span>
+    <span class="screw bl"></span><span class="screw br"></span>
+
+    <h2 class="returnhead">SUMMED<br>RETURN</h2>
+    <div class="returnstrips" id="return-strips"></div>
+    <div class="returnreadout" id="return-readout">-&#8734; dBFS</div>
+  </aside>
+</main>
+
+<div class="statusbar" id="statusbar">
+  <span id="status-text">Not connected to a device</span>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

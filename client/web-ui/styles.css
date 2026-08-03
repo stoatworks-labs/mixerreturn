@@ -1,0 +1,442 @@
+/* MixerReturn control surface.
+
+   Palette sampled from the design mockup rather than guessed, so the two match:
+   the warm brown carries almost the whole screen and the amber is used sparingly
+   enough that it still reads as an accent. */
+
+:root {
+  --bg:        #322b23;  /* the room */
+  --panel:     #2d2621;  /* rack sections and the return panel */
+  --trough:    #191410;  /* unlit meter, fader track */
+  --trough-lo: #1d1813;
+  --divider:   #40372c;
+  --amber:     #deab4f;  /* rack headings, return title */
+  --green:     #87b457;
+  --orange:    #e0952f;
+  --red:       #c8412f;
+  --cap:       #d2c8ba;  /* fader handle, and body text */
+  --text:      #d2c8ba;
+  --text-dim:  #8b8175;
+
+  --strip-w:   112px;
+  --bar-w:     7px;
+  --bar-gap:   6px;
+  --cap-w:     34px;
+  --cap-h:     22px;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- menu bar ------------------------------------------------------------ */
+
+.menubar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 14px;
+  height: 34px;
+  background: var(--trough-lo);
+  border-bottom: 1px solid #000;
+}
+
+.menu {
+  display: flex;
+  gap: 4px;
+}
+
+.menu button {
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.menu button:hover      { background: #ffffff14; }
+.menu button[aria-expanded="true"],
+.menu button.open       { background: #ffffff1f; }
+
+.titleblock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.simchip {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  color: var(--bg);
+  background: var(--amber);
+  padding: 2px 7px;
+  border-radius: 2px;
+}
+
+.simchip[hidden] { display: none; }
+
+/* ---- layout -------------------------------------------------------------- */
+
+main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.channels {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.rack {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--divider);
+}
+
+.rack:last-child { border-bottom: 0; }
+
+.rackhead {
+  margin: 0;
+  font-size: 11px;
+  font-weight: normal;
+  letter-spacing: 0.08em;
+}
+
+.disclose {
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--amber);
+  background: none;
+  border: 0;
+  padding: 5px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.disclose .arrow {
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+
+.disclose[aria-expanded="false"] .arrow { transform: rotate(0deg); }
+.disclose[aria-expanded="true"]  .arrow { transform: rotate(90deg); }
+
+.strips {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.rack.collapsed { flex: 0 0 auto; }
+.rack.collapsed .strips { display: none; }
+
+/* ---- one channel strip --------------------------------------------------- */
+
+/* Grow to share the width when the device has few channels, but never below the
+   readable minimum — past that the rack scrolls horizontally instead. */
+.strip {
+  flex: 1 1 var(--strip-w);
+  min-width: var(--strip-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0 8px;
+  border-right: 1px solid var(--divider);
+  background: var(--panel);
+}
+
+.strip .name {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.strip .num {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
+/* The fader: meter bar on the left, fader track on the right, handle across both.
+   The mockup mirrors these two in the return panel; they are kept the same way round
+   everywhere here, because a surface that flips its own convention halfway is a
+   surface someone misreads at speed. */
+.fader {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: calc(var(--bar-w) * 2 + var(--bar-gap) + 26px);
+  margin: 8px 0 6px;
+  touch-action: none;
+  cursor: ns-resize;
+}
+
+.bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--bar-w);
+  background: var(--trough);
+}
+
+.bar.meter { left: 10px; }
+.bar.track { left: calc(10px + var(--bar-w) + var(--bar-gap)); }
+
+/* The whole colour scale lives on the meter; an opaque mask hides the unlit part
+   from the top down. That keeps a given dB at a fixed height without any pixel maths. */
+.bar.meter {
+  background-image: linear-gradient(
+    to top,
+    var(--green)  0%,
+    var(--green)  62%,
+    var(--orange) 62%,
+    var(--orange) 93%,
+    var(--red)    93%,
+    var(--red)    100%);
+  overflow: hidden;
+}
+
+.bar.meter .mask {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  background: var(--trough);
+}
+
+.bar.meter .peak {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--cap);
+  opacity: 0.75;
+  bottom: 0;
+  display: none;
+}
+
+.ticks {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(10px + var(--bar-w) * 2 + var(--bar-gap) + 5px);
+  width: 8px;
+}
+
+.ticks i {
+  position: absolute;
+  left: 0;
+  width: 7px;
+  height: 1px;
+  background: var(--text-dim);
+  opacity: 0.65;
+}
+
+.cap {
+  position: absolute;
+  left: calc(10px - 4px);
+  width: var(--cap-w);
+  height: var(--cap-h);
+  margin-bottom: calc(var(--cap-h) / -2);
+  background: var(--cap);
+  border-radius: 1px;
+  box-shadow: 0 1px 2px #0008;
+  pointer-events: none;
+}
+
+.fader:focus-visible { outline: 1px solid var(--amber); outline-offset: 2px; }
+
+.strip .value {
+  font-size: 11px;
+  color: var(--green);
+  white-space: nowrap;
+}
+
+.strip.clipping .value { color: var(--red); }
+
+/* ---- summed return ------------------------------------------------------- */
+
+.returnpanel {
+  position: relative;
+  flex: 0 0 190px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 10px 14px;
+  background: var(--panel);
+  border-left: 1px solid #000;
+  box-shadow: inset 1px 0 0 #ffffff0a;
+}
+
+.returnhead {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  font-weight: normal;
+  line-height: 1.25;
+  letter-spacing: 0.06em;
+  text-align: center;
+  color: var(--amber);
+}
+
+.screw {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 32%, #e8dfd0, #9d9384 70%, #6d6459);
+}
+
+.screw.tl { top: 8px;    left: 10px; }
+.screw.tr { top: 8px;    right: 10px; }
+.screw.bl { bottom: 8px; left: 10px; }
+.screw.br { bottom: 8px; right: 10px; }
+
+.returnstrips {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.returnstrips .strip {
+  flex: 0 0 70px;
+  min-width: 70px;
+  border-right: 0;
+  background: none;
+  padding-top: 0;
+}
+
+.returnstrips .strip .name {
+  order: 3;
+  margin-top: 4px;
+}
+
+.returnstrips .ticks { display: none; }
+
+/* The panel's own dBFS readout covers both, so a per-strip number here would just be
+   the same figure twice. */
+.returnstrips .strip .value { display: none; }
+
+.returnreadout {
+  flex: 0 0 auto;
+  margin-top: 10px;
+  padding: 4px 12px;
+  min-width: 128px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--green);
+  background: #0d0c09;
+  border: 1px solid #000;
+  border-radius: 2px;
+}
+
+.returnreadout.clipping { color: var(--red); }
+
+/* ---- status bar ---------------------------------------------------------- */
+
+.statusbar {
+  flex: 0 0 auto;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--trough-lo);
+  border-top: 1px solid #000;
+}
+
+/* ---- scrollbar ----------------------------------------------------------- */
+
+.channels::-webkit-scrollbar { height: 10px; }
+.channels::-webkit-scrollbar-track { background: var(--trough-lo); }
+.channels::-webkit-scrollbar-thumb {
+  background: #7d7264;
+  border-radius: 5px;
+  border: 2px solid var(--trough-lo);
+}
+
+/* ---- menus --------------------------------------------------------------- */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  background: #000000a8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.sheet[hidden] { display: none; }
+
+.sheet .card {
+  background: var(--panel);
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  padding: 18px 20px;
+  min-width: 320px;
+  max-width: 560px;
+  max-height: 80vh;
+  overflow: auto;
+  box-shadow: 0 12px 40px #000a;
+}
+
+.sheet h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: normal;
+  color: var(--amber);
+  letter-spacing: 0.06em;
+}
+
+.sheet p, .sheet li { color: var(--text); line-height: 1.5; margin: 0 0 8px; }
+.sheet ul { margin: 0 0 8px; padding-left: 18px; }
+.sheet .dim { color: var(--text-dim); }
+
+.sheet .close {
+  font: inherit;
+  margin-top: 12px;
+  padding: 5px 14px;
+  color: var(--text);
+  background: #ffffff14;
+  border: 1px solid var(--divider);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.sheet .close:hover { background: #ffffff24; }
