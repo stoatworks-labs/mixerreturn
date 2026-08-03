@@ -152,8 +152,16 @@ made a plugin sufficient for the actual use case at a fraction of the cost — n
 AudioServerPlugIn to notarize, no nested-ASIO fragility, no Steinberg SDK redistribution
 constraint, no EV certificate and Microsoft attestation for a WDM kernel driver.
 
-What the plugin structurally cannot do, and Phase 2 must: SuperRack **SoundGrid** (hosts
-SoundGrid-format plugins only, no VST3), and routing between separate applications.
+**The target host is SuperRack Performer, not SoundGrid.** An earlier version of this
+document claimed Phase 2 would cover SuperRack SoundGrid; that was wrong. SoundGrid racks
+take their I/O from SoundGrid network hardware rather than from a CoreAudio or ASIO device,
+so a virtual audio device is not visible to SuperRack SoundGrid as rack I/O at all. The
+SoundGrid *driver* is a different matter — it presents CoreAudio/ASIO to the computer like
+any other interface, so it could in principle be the device being wrapped. That is reasoning
+from how the pieces fit, not something tested.
+
+What the plugin cannot do and Phase 2 can: take the plugin out of the chain altogether, and
+route between separate applications.
 
 ## 8. What has and hasn't been verified
 

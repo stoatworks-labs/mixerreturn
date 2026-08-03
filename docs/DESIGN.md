@@ -162,10 +162,17 @@ redistribution constraint, no EV certificate or Microsoft attestation for WDM.
 
 **Phase 2 — the wrapper virtual audio device.** The general product, and still worth
 building: a virtual device that passes a physical device's I/O through and adds virtual
-ports that can be summed to chosen outputs. It covers what the plugin structurally cannot —
-SuperRack **SoundGrid** (which hosts SoundGrid-format plugins only, no VST3), and routing
-between separate applications. Three separate platform efforts: macOS AudioServerPlugIn,
-Windows ASIO wrapper, Windows WDM.
+ports that can be summed to chosen outputs. It takes the plugin out of the chain entirely
+and covers routing between separate applications, which a plugin cannot. Three separate
+platform efforts: macOS AudioServerPlugIn, Windows ASIO wrapper, Windows WDM.
+
+**The target host is SuperRack Performer, not SoundGrid.** An earlier version of this
+document claimed Phase 2 would cover SuperRack SoundGrid; that was wrong. SoundGrid racks
+take their I/O from SoundGrid network hardware rather than from a CoreAudio or ASIO device,
+so a virtual audio device is not visible to SuperRack SoundGrid as rack I/O at all. The
+SoundGrid *driver* is a different matter — it presents CoreAudio/ASIO to the computer like
+any other interface, so it could in principle be the device being wrapped. That is reasoning
+from how the pieces fit, not something tested.
 
 ## Sources
 

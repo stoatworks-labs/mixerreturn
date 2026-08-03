@@ -180,9 +180,19 @@ several. [docs/DESIGN.md](docs/DESIGN.md) has the detail.
 ## Roadmap
 
 Phase 2 is the original idea: a virtual audio device that wraps a CoreAudio/ASIO/WDM device,
-passes its I/O through, and adds summable virtual ports. That covers what a plugin
-structurally cannot — SuperRack **SoundGrid** (no VST3), and routing between separate
-applications.
+passes its I/O through, and adds summable virtual ports. It takes the plugin out of the
+chain entirely and moves the routing decision to where the rack is patched, and it covers
+routing between separate applications, which a plugin cannot.
+
+**The target host is SuperRack Performer, not SoundGrid.** An earlier version of this
+document claimed Phase 2 would cover SuperRack SoundGrid; that was wrong. SoundGrid racks
+take their I/O from SoundGrid network hardware rather than from a CoreAudio or ASIO device,
+so a virtual audio device is not visible to SuperRack SoundGrid as rack I/O at all. The
+SoundGrid *driver* is a different matter — it presents CoreAudio/ASIO to the computer like
+any other interface, so it could in principle be the device being wrapped. That is reasoning
+from how the pieces fit, not something tested.
+
+The control surface for it lives in [client/](client/).
 
 ## Licence
 
