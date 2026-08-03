@@ -180,9 +180,23 @@ several. [docs/DESIGN.md](docs/DESIGN.md) has the detail.
 ## Roadmap
 
 Phase 2 is the original idea: a virtual audio device that wraps a CoreAudio/ASIO/WDM device,
-passes its I/O through, and adds summable virtual ports. It takes the plugin out of the
-chain entirely and moves the routing decision to where the rack is patched, and it covers
-routing between separate applications, which a plugin cannot.
+passes its I/O through, and adds summable virtual ports named `Sum n`.
+
+**The device is the product; the plugin is the version that works without installing one.**
+
+Once the wrapper exists, a rack's output patch *is* the routing decision — physical output to
+behave as an insert, or a `Sum` port to feed the buses — with no plugin in the chain at all.
+The wrapper is also strictly better technically: a driver receives every Sum port in one
+callback, so it can sum with **no added delay**, where the plugin must cost a block. The
+entire two-page barrier in this plugin exists only because plugin instances cannot see each
+other's timing; a driver has no such problem.
+
+What the plugin still gives you, honestly and completely: it exists today; it needs no driver
+install, no admin rights, no notarized system extension and no signed kernel driver; it does
+not depend on successfully wrapping any particular interface; and it therefore runs on locked
+down or rented machines where a system audio device is not an option. That is "easier to
+deploy", not "does something the device cannot". The one capability gap runs the other way —
+routing between separate applications, which a per-process plugin bus can never do.
 
 **The target host is SuperRack Performer, not SoundGrid.** An earlier version of this
 document claimed Phase 2 would cover SuperRack SoundGrid; that was wrong. SoundGrid racks
