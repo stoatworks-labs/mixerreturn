@@ -7,9 +7,13 @@
 > order reshuffled on every block, 400 blocks with 17 instances racing on their own
 > threads, plus trim, mute, bypass participation and bus isolation (`mrtest`), and it is
 > clean under ThreadSanitizer. `pluginval` passes clean at strictness 8 on VST3, and on AU
-> with one known benign wrapper warning. It has **not** been loaded in SuperRack Performer, **not** been
-> run against a real console, and **not** been used on a show. Every claim about SQ
-> behaviour comes from the reference guide, not from hardware. Review before use on live gear.
+> with one known benign wrapper warning. It **has** been loaded in Waves SuperRack Performer
+> v15.15.12 on macOS: two instances in separate racks both report *"2 members on this bus"*,
+> confirming in the real host the thing the whole design rests on — that instances created
+> from one bundle share a single registry. **No audio device was attached for that test**, so
+> audio has not been heard passing through the sum. It has **not** been run against a real
+> console and **not** been used on a show. Every claim about SQ behaviour comes from the
+> reference guide, not from hardware. Review before use on live gear.
 
 Bolt a Dugan Automixer onto a console that hasn't got one — post-fader, without spending an
 insert slot or a second channel strip per mic.

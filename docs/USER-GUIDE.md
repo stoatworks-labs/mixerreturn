@@ -14,9 +14,12 @@ mix's External Input.
 > racing on their own threads — and it is clean under ThreadSanitizer. `pluginval` passes at
 > strictness 8.
 >
-> But it has **not been loaded in SuperRack Performer, not been run against a real console, and
-> not been used on a show**. **Every claim about SQ behaviour here comes from the reference
-> guide, not from hardware.** Review it before use on live gear.
+> It **has** been loaded in Waves SuperRack Performer v15.15.12 on macOS: two instances in
+> separate racks both report *"2 members on this bus"*, which confirms in the real host that
+> instances share one registry. **No audio device was attached for that test**, so audio has
+> not been heard passing through the sum. It has **not been run against a real console and
+> not been used on a show**. **Every claim about SQ behaviour here comes from the reference guide, not from
+> hardware.** Review it before use on live gear.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
 
@@ -143,6 +146,32 @@ Two console-side details that will bite otherwise.
 
 - [DESIGN.md](DESIGN.md) — the summing bus, and why the delay is uniform by design
 - [README](../README.md) — signal flow, controls and downloads
+
+
+## Installing
+
+**On macOS, install to the system folder, not your home folder:**
+
+```
+/Library/Audio/Plug-Ins/VST3/
+```
+
+This matters more than it looks. **Waves SuperRack Performer scans only the system VST3
+folder — it never looks in `~/Library/Audio/Plug-Ins/VST3/`.** A plugin dropped into the
+user folder simply will not appear in SuperRack, with no error and nothing in a log to
+explain it. The `.pkg` installer puts it in the right place; if you use the `.zip`, copy the
+bundle to the path above rather than to your home folder.
+
+That directory is world-writable on a stock macOS install, so no administrator password is
+needed to copy into it.
+
+**SuperRack scans at launch only.** If you install or update the plugin while SuperRack is
+running, quit and relaunch it before expecting to see the change.
+
+You do not need to unquarantine anything. A locally built or `.zip`-extracted bundle carries
+no `com.apple.quarantine` attribute here, and the plugin loads and runs in SuperRack with an
+ad-hoc signature — Developer ID signing and notarization are not required for it to be
+hosted.
 
 ---
 

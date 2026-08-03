@@ -193,6 +193,16 @@ cmake -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" && cmake --build build-tsan --target mrtest
 ```
 
-**Never done:** loaded in SuperRack Performer. Run against a real SQ or any console. Used on
-a show. Every claim about console behaviour comes from the reference guide, not from
+**Done in the real host (2026-08-03):** loaded in Waves SuperRack Performer v15.15.12 on
+macOS, two instances in separate racks, both reading "2 members on this bus" — so the
+cross-instance registry works through the real plugin-format boundary in the real host, not
+just in `mrhost`. No audio device was attached, so no audio was passed.
+
+**Install location is not optional on macOS:** SuperRack scans only
+`/Library/Audio/Plug-Ins/VST3/` and never `~/Library/Audio/Plug-Ins/VST3/`. A plugin in the
+user folder is invisible to it with no error. Ad-hoc signing is fine — Developer ID and
+notarization are *not* required to be hosted. SuperRack scans at launch only.
+
+**Never done:** run against a real SQ or any console. Used on a show. Audio heard through
+the sum. Every claim about console behaviour comes from the reference guide, not from
 hardware. Do not describe this as field-proven.
