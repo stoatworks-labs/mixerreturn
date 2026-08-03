@@ -193,12 +193,22 @@ main {
    The mockup mirrors these two in the return panel; they are kept the same way round
    everywhere here, because a surface that flips its own convention halfway is a
    surface someone misreads at speed. */
-.fader {
-  position: relative;
+/* Holds the fader and, on Sum strips, the assign column beside it. */
+.fadergroup {
   flex: 1 1 auto;
   min-height: 0;
-  width: calc(var(--bar-w) * 2 + var(--bar-gap) + 26px);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 5px;
   margin: 8px 0 6px;
+}
+
+.fader {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 0;
+  width: calc(var(--bar-w) * 2 + var(--bar-gap) + 26px);
   touch-action: none;
   cursor: ns-resize;
 }
@@ -289,25 +299,24 @@ main {
 
 /* ---- console-style bus assign ------------------------------------------- */
 
-/* Lifted from the numbered assign switches down a Midas channel strip: a fixed grid
-   where each bus always sits in the same place, so it is read by position rather than
-   by looking. Two columns rather than one because a three-high fader bank has no room
-   for a column of eight. */
+/* Lifted from the numbered assign switches down a Midas channel strip: a single column
+   beside the fader, where each bus always sits at the same height, so it is read by
+   position rather than by looking. */
 .busassign {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(8, 1fr);
   gap: 2px;
-  margin-top: 6px;
-  padding: 0 8px;
-  width: 100%;
-  max-width: 78px;
+  width: 22px;
+  flex: 0 0 auto;
+  max-height: 100%;
 }
 
 .busbtn {
   font: inherit;
   font-size: 9px;
   line-height: 1;
-  padding: 3px 0;
+  padding: 0;
+  min-height: 0;
   text-align: center;
   color: var(--text-dim);
   background: #14100d;

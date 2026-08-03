@@ -109,12 +109,14 @@ class Strip {
     this.el.innerHTML = `
       <div class="name"></div>
       ${this.compact ? '' : '<div class="num"></div>'}
-      <div class="fader" tabindex="0" role="slider"
-           aria-valuemin="${MIN_DB}" aria-valuemax="${MAX_DB}">
-        <div class="bar meter"><div class="mask"></div></div>
-        <div class="bar track"></div>
-        <div class="ticks"></div>
-        <div class="cap"></div>
+      <div class="fadergroup">
+        <div class="fader" tabindex="0" role="slider"
+             aria-valuemin="${MIN_DB}" aria-valuemax="${MAX_DB}">
+          <div class="bar meter"><div class="mask"></div></div>
+          <div class="bar track"></div>
+          <div class="ticks"></div>
+          <div class="cap"></div>
+        </div>
       </div>
       <div class="value"></div>`;
 
@@ -216,7 +218,9 @@ class SumStrip extends Strip {
       this.busButtons.push(btn);
     }
 
-    this.el.appendChild(grid);
+    // Beside the fader rather than below it, as a numbered column down the strip — the
+    // Midas arrangement, and it keeps the fader its full height.
+    this.el.querySelector('.fadergroup').appendChild(grid);
   }
 
   toggleBus(b, force) {
