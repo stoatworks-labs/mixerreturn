@@ -9,8 +9,21 @@
 # doing it in a VM costs `tart delete`.
 #
 #   ./tools/vmtest.sh              build, install into a fresh VM, report
+#   ./tools/vmtest.sh --control    install libASPL's OWN example instead of ours
 #   ./tools/vmtest.sh --keep       leave the VM running afterwards to poke at it
 #   ./tools/vmtest.sh --shell      just open a shell in a fresh VM
+#
+# RUN --control FIRST, on a new machine or after any change to the harness.
+#
+# It installs libASPL's unmodified SinewaveDevice example, which is known to work. If that
+# appears, the harness, the VM, the signing and the install path are all proven, and any
+# later failure belongs to our driver. If it does NOT appear, nothing this script says
+# about our driver means anything.
+#
+# This is the step that was skipped on the host, and skipping it is what turned a bad
+# driver into a day of chasing ghosts: with no control, every failure looked like it could
+# be the bundle, the plist, the signature, the UUID, the path or the machine, and each
+# theory could be "confirmed" by a test that was itself unsound.
 #
 # The VM is cloned from a base image every run, so each test starts from a known-good
 # system. That matters more than it sounds: a driver that half-registers can leave CoreAudio
@@ -30,10 +43,12 @@ BUNDLE="$ROOT/build/MixerReturn.driver"
 
 KEEP=0
 SHELL_ONLY=0
+CONTROL=0
 for arg in "$@"; do
   case "$arg" in
-    --keep)  KEEP=1 ;;
-    --shell) SHELL_ONLY=1; KEEP=1 ;;
+    --keep)    KEEP=1 ;;
+    --shell)   SHELL_ONLY=1; KEEP=1 ;;
+    --control) CONTROL=1 ;;
   esac
 done
 
@@ -59,11 +74,25 @@ trap cleanup EXIT
 # toolchain, and installing one into every throwaway VM would make each run take minutes
 # instead of seconds.
 # ---------------------------------------------------------------------------------------
-if [[ $SHELL_ONLY -eq 0 ]]; then
+if [[ $CONTROL -eq 1 ]]; then
+  # libASPL's own example, built and signed exactly like ours so the only difference is
+  # whose code is inside.
+  SRC="$ROOT/build/_deps/libaspl-src"
+  [[ -d "$SRC" ]] || fail "libASPL sources not fetched yet - run a normal build first"
+  note "building libASPL's SinewaveDevice example as a control"
+  cmake -S "$SRC/examples/SinewaveDevice" -B /tmp/mr-control-build \
+        -DCMAKE_OSX_ARCHITECTURES="arm64" >/dev/null || fail "control configure failed"
+  cmake --build /tmp/mr-control-build >/dev/null || fail "control build failed"
+  BUNDLE=$(find /tmp/mr-control-build -maxdepth 2 -name "*.driver" | head -1)
+  [[ -n "$BUNDLE" ]] || fail "control build produced no .driver"
+  codesign --force --sign - "$BUNDLE" >/dev/null 2>&1
+  EXPECT="Sinewave"
+elif [[ $SHELL_ONLY -eq 0 ]]; then
   note "building on the host"
   cmake --build "$ROOT/build" >/dev/null || fail "build failed"
   [[ -d "$BUNDLE" ]] || fail "no bundle at $BUNDLE"
   codesign --verify --strict "$BUNDLE" || fail "bundle signature does not verify"
+  EXPECT="MixerReturn"
 fi
 
 # ---------------------------------------------------------------------------------------
@@ -110,19 +139,19 @@ fi
 # Install and interrogate. `sudo -S` because the base images use a password-auth admin.
 # ---------------------------------------------------------------------------------------
 note "copying the driver in"
-scp_vm "$BUNDLE" "$VMUSER@$IP:/tmp/MixerReturn.driver"
+scp_vm "$BUNDLE" "$VMUSER@$IP:/tmp/$(basename $BUNDLE)"
 
 note "installing and restarting coreaudiod"
-ssh_vm "echo '$VMPASS' | sudo -S cp -R /tmp/MixerReturn.driver /Library/Audio/Plug-Ins/HAL/ 2>/dev/null && echo '$VMPASS' | sudo -S killall coreaudiod 2>/dev/null; sleep 6"
+ssh_vm "echo '$VMPASS' | sudo -S cp -R /tmp/$(basename $BUNDLE) /Library/Audio/Plug-Ins/HAL/ 2>/dev/null && echo '$VMPASS' | sudo -S killall coreaudiod 2>/dev/null; sleep 6"
 
 note "what CoreAudio sees"
 ssh_vm "system_profiler SPAudioDataType 2>/dev/null | grep -E '^ {8}[A-Za-z].*:\$' || true"
 
 print ""
-if ssh_vm "system_profiler SPAudioDataType 2>/dev/null | grep -qi mixerreturn"; then
-  print -P "%F{green}PASS%f  MixerReturn is present in the VM's device list"
+if ssh_vm "system_profiler SPAudioDataType 2>/dev/null | grep -qi '$EXPECT'"; then
+  print -P "%F{green}PASS%f  $EXPECT is present in the VM's device list"
 else
-  print -P "%F{red}FAIL%f  MixerReturn did not appear"
+  print -P "%F{red}FAIL%f  $EXPECT did not appear"
   note "driver's own trace (this is why the driver enables the libASPL syslog tracer)"
   ssh_vm "log show --last 2m --predicate 'senderImagePath CONTAINS \"MixerReturn\" OR eventMessage CONTAINS \"MixerReturn\"' 2>/dev/null | tail -40 || true"
   note "and anything coreaudiod said about loading plugins"
