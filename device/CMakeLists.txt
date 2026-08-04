@@ -65,15 +65,43 @@ if(EXISTS "$ENV{HOME}/.config/stoatworks/release-signing.env" AND MR_SIGN_IDENTI
 endif()
 
 add_custom_command(TARGET MixerReturnDriver POST_BUILD
+    # Rewrite the Info.plist through plutil before signing.
+    #
+    # Not cosmetic, and not yet fully explained. The plist CMake writes passes `plutil
+    # -lint`, parses correctly, and has exactly the keys a working driver has -- and
+    # CFBundleCreate still refuses to open the bundle, which means coreaudiod cannot look
+    # at it and the device never appears. Rewriting the same content through plutil
+    # produces a bundle that opens. Converting to binary1 is a real rewrite (unlike
+    # `-convert xml1` on a file that is already xml1, which is a no-op), and binary is the
+    # normal form for a plist inside a bundle anyway.
+    COMMAND plutil -convert binary1
+            "$<TARGET_BUNDLE_DIR:MixerReturnDriver>/Contents/Info.plist"
     COMMAND codesign --force --sign "${MR_SIGN_IDENTITY}" --timestamp --options runtime
             "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
     # Verify rather than trust the exit code above: a signature that codesign writes
     # happily can still fail to validate, and an invalid one loads exactly as well as no
     # signature at all, which is to say not at all and without saying so.
     COMMAND codesign --verify --strict "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
+    # Then prove the result is loadable, rather than finding out via a root install and a
+    # coreaudiod restart that ends in an empty device list. mrprobe does what coreaudiod
+    # does -- CFBundle, CFPlugIn instance, QueryInterface, Initialize -- and exits non-zero
+    # on the first step that fails, which fails the build.
+    COMMAND "$<TARGET_FILE:mrprobe>" "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
     COMMAND ${CMAKE_COMMAND} -E echo
-        "signed with '${MR_SIGN_IDENTITY}' - install needs root, see README.md"
+        "signed and probed OK - install needs root, see README.md"
     # VERBATIM, because the identity contains spaces and parentheses -- "Developer ID
     # Application: NAME (TEAMID)" -- and without it CMake hands the bare string to the
     # shell, which reads the brackets as syntax and leaves the bundle unsigned.
     VERBATIM)
+
+# --------------------------------------------------------------------------------------
+# mrprobe — loads the driver the way coreaudiod does, in a process that can be debugged.
+#
+# Kept in the build because the failure it catches is completely silent: a HAL plugin that
+# coreaudiod will not load produces no log line and no device, which is indistinguishable
+# from a driver that loaded and published nothing. This separates the two in a second,
+# with no root install and no coreaudiod restart.
+# --------------------------------------------------------------------------------------
+add_executable(mrprobe tools/mrprobe.c)
+target_link_libraries(mrprobe PRIVATE "-framework CoreFoundation" "-framework CoreAudio")
+add_dependencies(MixerReturnDriver mrprobe)
