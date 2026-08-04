@@ -18,6 +18,11 @@
 Bolt a Dugan Automixer onto a console that hasn't got one — post-fader, without spending an
 insert slot or a second channel strip per mic.
 
+**Video:** [What it does, in 40 seconds](https://www.youtube.com/watch?v=t9zyvEmsRCc) — a
+real Dugan Automixer running in Waves SuperRack Performer, summed back to one pair.
+
+[![MixerReturn](docs/video-thumb.png)](https://www.youtube.com/watch?v=t9zyvEmsRCc)
+
 <!-- downloads:start -->
 
 ## Download
