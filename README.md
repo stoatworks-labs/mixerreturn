@@ -31,7 +31,7 @@ insert slot or a second channel strip per mic.
 | --- | --- | --- |
 | Universal (Apple Silicon + Intel) · .dmg disk image | [`mixerreturn-0.2.0-macos-universal.dmg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-macos-universal.dmg) | 9.8 MB |
 | Universal (Apple Silicon + Intel) · .pkg installer | [`mixerreturn-0.2.0-macos-universal.pkg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-macos-universal.pkg) | 9.8 MB |
-| Universal (Apple Silicon + Intel) · .zip archive | [`mixerreturn-macos-universal.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-macos-universal.zip) | 9.5 MB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`mixerreturn-macos-universal.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-macos-universal.zip) | 9.8 MB |
 
 </details>
 
@@ -62,6 +62,8 @@ insert slot or a second channel strip per mic.
 </details>
 
 All builds, checksums and release notes: [github.com/stoatworks-labs/mixerreturn/releases](https://github.com/stoatworks-labs/mixerreturn/releases).
+
+macOS builds are signed and notarised and open normally. The Windows builds are unsigned, so SmartScreen warns once.
 
 <!-- downloads:end -->
 
