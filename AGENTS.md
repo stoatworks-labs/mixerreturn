@@ -13,9 +13,11 @@ built with JUCE in C++.
 
 It is an **interface for Waves SuperRack Performer**. It exists for one job: let a Dugan
 Automixer run across a console's channel direct outs and return the automixed result summed
-to a single stereo pair, back into a group's External Input. The desk's direct outs feed one
-rack per channel, each rack runs a Dugan instance followed by a MixerReturn instance, and one
-further instance emits the sum.
+to a single stereo pair, back into a group's External Input.
+
+**The topology is two racks per channel, not one — see §1a.** An earlier version of this
+document said each rack runs "a Dugan instance followed by a MixerReturn instance". That is
+not possible, and the correction matters more than any other fact in this file.
 
 **The product claim is what it doesn't cost.** Working on direct outs rather than inserts
 means the desk's **insert slots stay free for normal plugin inserts on the channel strips**,
@@ -24,8 +26,55 @@ twice. It adds an automixer to a desk without taking anything away from it. Lead
 when describing the project — it is the reason anyone would choose this over inserting the
 automixer per channel.
 
+That claim is about the **console**, and it survives §1a intact — no channel strip is used
+twice and no insert slot is taken. What §1a costs is on the **SuperRack** side: two racks and
+a loopback channel per mic. Don't blur the two when describing the project.
+
 Phase 1 of a two-phase project. Phase 2 is the virtual audio device that was the original
 idea — see §7.
+
+## 1a. The Dugan is not a plugin, and nothing can be inserted after it
+
+Measured in SuperRack Performer v15.15.12 on 2026-08-04, with real audio.
+
+**SuperRack's Dugan Automixer is part of the rack's output stage, not a plugin slot.** A
+rack has eight user plugin slots, indexed 0–7 in the session database. Enabling the Dugan
+on a rack writes a `Dugan Speech` module at **slot 8** with `plug_role = 16`, and the rack's
+OUTPUT panel gains a "Dugan Automixer" label. There is no slot after it, and there is **no
+Dugan available as an insertable plugin** — searching the plugin browser for "dugan" or
+"automix" returns nothing.
+
+Two consequences, both verified rather than reasoned:
+
+- **The gain sharing senses post-plugin-chain.** With two racks fed equal noise, both
+  settled at −4.4 dB. Raising one rack's level by 10 dB *inside its plugin chain* moved the
+  two outputs to +8.9 dB and −11.1 dB — a difference of **19.99 dB**, i.e. the 10 dB of
+  plugin gain plus a 10 dB shift in the shared gain. If the detector tapped the rack input,
+  the other rack would not have moved at all.
+- **A MixerReturn in the same rack therefore sends the *pre*-automix signal.** Measured: the
+  rack outputs were Dugan-attenuated to −4.39 dB while the bus sum carried the raw inputs at
+  **+0.02 dB**. Putting MixerReturn in the *last* user slot (7) changes nothing — still
+  +0.00 dB. The sum contained no automixing whatsoever.
+
+**The topology that works, and is verified end to end:**
+
+```
+direct out -> Rack A: [ ...plugins... ] -> Dugan (output stage) -> output N
+                                                                     |
+                                                                     v  (loopback)
+              Rack B: input N -> MixerReturn (send to bus) -> unused output
+              ...
+              Rack Z: MixerReturn in Bus Sum mode -> the return to the desk
+```
+
+Rack B's input must be fed from Rack A's output, which needs a loopback path — a spare
+physical I/O pair, or a virtual audio device. Verified on a 32-channel loopback device: the
+bus sum came out bit-exact against the sum of the two Dugan-processed feeds, residual
+−178 dBFS, one 256-sample block of delay, uniform.
+
+The cost is a second rack and a loopback channel per mic. **This is the strongest argument
+yet for Phase 2** (§7): a driver that owns the I/O makes the loopback free, and the product
+claim in §1 stops depending on burning console I/O to get the automixed signal back.
 
 ## 2. The one rule that matters most
 
@@ -73,6 +122,8 @@ Source/
 tests/mrtest.cpp             Headless numerical verification of the bus
 tests/mrhost.cpp             The same check, but run through the built .vst3 as a host
 tools/mrshot.cpp             Renders the editor to PNG for the documentation
+tools/mrio.cpp               CoreAudio rig that measures the plugin inside the real host
+tools/resid.py               Checks a captured sum against the captured senders, exactly
 docs/DESIGN.md               Why it works this way, plus the console-side findings
 ```
 
@@ -116,6 +167,21 @@ Things that follow from it, each of which is load-bearing:
   `claimed` and `active`.
 - **Latency is reported per output mode**: one block if this instance emits the sum, zero if
   it merely passes its input through.
+- **"One block" means the block the host actually calls, not the one it prepared for.**
+  `prepareToPlay`'s `samplesPerBlock` is a *maximum*. SuperRack prepares with 2048 and then
+  processes 256, so reporting `preparedBlock` claimed 42.7 ms for a bus that delays 5.3 ms —
+  and the host believed it, showing 42.7 ms in the rack's LTNC readout. The audio thread
+  records the real block size in `observedBlock` (a plain relaxed store, nothing more) and a
+  10 Hz `Timer` on the message thread turns it into `setLatencySamples`. Every test that
+  prepares and processes at the same size is blind to this; `testLatencyFollowsActualBlockSize`
+  deliberately does not.
+- **Do not clear `observedBlock` in `prepareToPlay`.** Reporting a latency change makes the
+  host re-prepare, so clearing it produced a feedback loop with SuperRack — prepare 2048,
+  report 2048, process 256, timer reports 256, host re-prepares, forget, report 2048 — ten
+  times a second, releasing and reacquiring a bus slot on every pass. Carrying the previous
+  run's value over means the re-prepare reports the same number, `setLatencySamples` sees no
+  change, and the host is told nothing. This one is invisible to `mrtest` and was caught only
+  by watching the plugin's own log while SuperRack ran.
 
 ## 5. The bus is per-process
 
@@ -198,11 +264,37 @@ macOS, two instances in separate racks, both reading "2 members on this bus" —
 cross-instance registry works through the real plugin-format boundary in the real host, not
 just in `mrhost`. No audio device was attached, so no audio was passed.
 
+**Real audio through the real host (2026-08-04):** SuperRack Performer v15.15.12, 48 kHz,
+256-sample buffer, I/O on a 32-channel loopback virtual device (Pro Tools Audio Bridge 32 —
+verified bit-transparent 1:1 first, and it shares happily with SuperRack). Independent white
+noise per channel, recovered by cross-correlation, so every gain and delay below is measured
+rather than inferred:
+
+- Pass-through (`Output = Input`) is **bit-exact** and adds no delay: gain +0.00 dB,
+  correlation 1.000, residual at float-rounding level.
+- The bus sum equals the sum of the senders **delayed by exactly 256 samples**, uniform
+  across all senders — 0 of 143744 samples and 0 of 561 blocks in error, residual −163 dBFS.
+- −6 dB of send trim came back as 0.501187 (−6.00 dB). A muted send came back as **exactly
+  zero**, not a stale block.
+- A bypassed instance contributed exactly zero **and the barrier did not wedge** — so
+  SuperRack does keep calling a bypassed plugin, and `processBlockBypassed`'s `arrive()`
+  earns its keep in the real host.
+- Moving one instance to another bus removed it from the sum and left the rest bit-exact;
+  the instance reported "1 member on this bus", the others "4".
+- Latency now reads 5.3 ms in the rack's LTNC readout, matching the measured 256 samples.
+
+`tools/mrio.cpp` and `tools/resid.py` reproduce all of it; the build line and the usual
+invocation are in the comment at the top of `mrio.cpp`. Note that measuring latency this way
+needs a device that is genuinely bit-transparent — `mrio probe` checks that before you trust
+anything else.
+
+**Still never done:** run against a real SQ or any console, or use it on a show. Every claim
+about console behaviour still comes from the reference guide, not from hardware. The audio
+above went through a virtual loopback device, not a desk. Do not describe this as
+field-proven.
+
 **Install location is not optional on macOS:** SuperRack scans only
 `/Library/Audio/Plug-Ins/VST3/` and never `~/Library/Audio/Plug-Ins/VST3/`. A plugin in the
 user folder is invisible to it with no error. Ad-hoc signing is fine — Developer ID and
 notarization are *not* required to be hosted. SuperRack scans at launch only.
 
-**Never done:** run against a real SQ or any console. Used on a show. Audio heard through
-the sum. Every claim about console behaviour comes from the reference guide, not from
-hardware. Do not describe this as field-proven.
