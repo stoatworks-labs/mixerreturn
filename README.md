@@ -236,6 +236,10 @@ from how the pieces fit, not something tested.
 
 The control surface for it lives in [client/](client/).
 
+<!-- attributions:start -->
+This project is built on other people's work — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+<!-- attributions:end -->
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
