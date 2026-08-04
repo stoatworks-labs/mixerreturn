@@ -34,9 +34,9 @@ real Dugan Automixer running in Waves SuperRack Performer, summed back to one pa
 
 | Build | Download | Size |
 | --- | --- | --- |
-| Universal (Apple Silicon + Intel) · .dmg disk image | [`mixerreturn-0.3.0-macos-universal.dmg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-macos-universal.dmg) | 11 MB |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`mixerreturn-0.3.0-macos-universal.dmg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-macos-universal.dmg) | 9.8 MB |
 | Universal (Apple Silicon + Intel) · .pkg installer | [`mixerreturn-0.3.0-macos-universal.pkg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-macos-universal.pkg) | 9.8 MB |
-| Universal (Apple Silicon + Intel) · .zip archive | [`mixerreturn-macos-universal.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-macos-universal.zip) | 9.5 MB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`mixerreturn-macos-universal.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-macos-universal.zip) | 9.8 MB |
 
 </details>
 
