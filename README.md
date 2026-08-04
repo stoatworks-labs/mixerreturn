@@ -7,11 +7,11 @@
 > order reshuffled on every block, 400 blocks with 17 instances racing on their own
 > threads, plus trim, mute, bypass participation and bus isolation (`mrtest`), and it is
 > clean under ThreadSanitizer. `pluginval` passes clean at strictness 8 on VST3, and on AU
-> with one known benign wrapper warning. It **has** been loaded in Waves SuperRack Performer
-> v15.15.12 on macOS: two instances in separate racks both report *"2 members on this bus"*,
-> confirming in the real host the thing the whole design rests on — that instances created
-> from one bundle share a single registry. **No audio device was attached for that test**, so
-> audio has not been heard passing through the sum. It has **not** been run against a real
+> with one known benign wrapper warning. It **has** been run with real audio in Waves
+> SuperRack Performer v15.15.12 on macOS, over a loopback virtual device: pass-through is
+> bit-exact and adds no delay, the sum equals the sum of its senders delayed by exactly one
+> block with 0 of 143744 samples in error, trim and mute are exact, and a bypassed instance
+> contributes zero without wedging the barrier. It has **not** been run against a real
 > console and **not** been used on a show. Every claim about SQ behaviour comes from the
 > reference guide, not from hardware. Review before use on live gear.
 
@@ -22,16 +22,16 @@ insert slot or a second channel strip per mic.
 
 ## Download
 
-**[v0.2.0](https://github.com/stoatworks-labs/mixerreturn/releases/tag/v0.2.0)** — prebuilt for macOS, Windows and Linux. Pick your platform:
+**[v0.3.0](https://github.com/stoatworks-labs/mixerreturn/releases/tag/v0.3.0)** — prebuilt for macOS, Windows and Linux. Pick your platform:
 
 <details>
 <summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| Universal (Apple Silicon + Intel) · .dmg disk image | [`mixerreturn-0.2.0-macos-universal.dmg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-macos-universal.dmg) | 9.8 MB |
-| Universal (Apple Silicon + Intel) · .pkg installer | [`mixerreturn-0.2.0-macos-universal.pkg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-macos-universal.pkg) | 9.8 MB |
-| Universal (Apple Silicon + Intel) · .zip archive | [`mixerreturn-macos-universal.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-macos-universal.zip) | 9.8 MB |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`mixerreturn-0.3.0-macos-universal.dmg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-macos-universal.dmg) | 11 MB |
+| Universal (Apple Silicon + Intel) · .pkg installer | [`mixerreturn-0.3.0-macos-universal.pkg`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-macos-universal.pkg) | 9.8 MB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`mixerreturn-macos-universal.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-macos-universal.zip) | 9.5 MB |
 
 </details>
 
@@ -40,8 +40,8 @@ insert slot or a second channel strip per mic.
 
 | Build | Download | Size |
 | --- | --- | --- |
-| x64 · .exe installer | [`mixerreturn-0.2.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-windows-x86_64-setup.exe) | 2.8 MB |
-| ARM64 · .exe installer | [`mixerreturn-0.2.0-windows-aarch64-setup.exe`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-windows-aarch64-setup.exe) | 2.6 MB |
+| x64 · .exe installer | [`mixerreturn-0.3.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-windows-x86_64-setup.exe) | 2.8 MB |
+| ARM64 · .exe installer | [`mixerreturn-0.3.0-windows-aarch64-setup.exe`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-windows-aarch64-setup.exe) | 2.6 MB |
 | x64 · .zip archive | [`mixerreturn-windows-x86_64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-windows-x86_64.zip) | 5.1 MB |
 | ARM64 · .zip archive | [`mixerreturn-windows-aarch64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-windows-aarch64.zip) | 4.9 MB |
 
@@ -52,10 +52,10 @@ insert slot or a second channel strip per mic.
 
 | Build | Download | Size |
 | --- | --- | --- |
-| x64 · .deb package (Debian/Ubuntu) | [`mixerreturn_0.2.0_amd64.deb`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn_0.2.0_amd64.deb) | 2.1 MB |
-| ARM64 · .deb package (Debian/Ubuntu) | [`mixerreturn_0.2.0_arm64.deb`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn_0.2.0_arm64.deb) | 2.2 MB |
-| x64 · .rpm package (Fedora/RHEL) | [`mixerreturn-0.2.0-1.x86_64.rpm`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-1.x86_64.rpm) | 2.2 MB |
-| ARM64 · .rpm package (Fedora/RHEL) | [`mixerreturn-0.2.0-1.aarch64.rpm`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.2.0/mixerreturn-0.2.0-1.aarch64.rpm) | 2.2 MB |
+| x64 · .deb package (Debian/Ubuntu) | [`mixerreturn_0.3.0_amd64.deb`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn_0.3.0_amd64.deb) | 2.1 MB |
+| ARM64 · .deb package (Debian/Ubuntu) | [`mixerreturn_0.3.0_arm64.deb`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn_0.3.0_arm64.deb) | 2.2 MB |
+| x64 · .rpm package (Fedora/RHEL) | [`mixerreturn-0.3.0-1.x86_64.rpm`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-1.x86_64.rpm) | 2.2 MB |
+| ARM64 · .rpm package (Fedora/RHEL) | [`mixerreturn-0.3.0-1.aarch64.rpm`](https://github.com/stoatworks-labs/mixerreturn/releases/download/v0.3.0/mixerreturn-0.3.0-1.aarch64.rpm) | 2.2 MB |
 | x64 · .zip archive | [`mixerreturn-linux-x86_64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-linux-x86_64.zip) | 4.2 MB |
 | ARM64 · .zip archive | [`mixerreturn-linux-aarch64.zip`](https://github.com/stoatworks-labs/mixerreturn/releases/latest/download/mixerreturn-linux-aarch64.zip) | 4.2 MB |
 
@@ -92,9 +92,10 @@ the bus — which is why the member count and the latency readout are the actual
 a mock-up.*
 
 MixerReturn is a VST3/AU/Standalone plugin that gives a plugin host something it doesn't
-otherwise have: a **shared summing bus** spanning many instances. Put one instance after
-the automixer on each channel's rack, and one more instance set to output the sum. That
-sum returns to the desk as a mix's External Input.
+otherwise have: a **shared summing bus** spanning many instances. Put one instance in a rack
+fed from each automixed channel, and one more instance set to output the sum. That sum
+returns to the desk as a mix's External Input. Note the feeding rack is a *second* rack per
+mic, not the one running the automixer — see [the signal flow](#the-signal-flow) below.
 
 ## The signal flow
 
