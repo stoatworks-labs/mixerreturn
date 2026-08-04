@@ -144,9 +144,36 @@ public:
     }
 };
 
+// Float32 interleaved, N channels. Every byte-count field is derived from the channel
+// count rather than left at a default, because the HAL validates them against each other.
+AudioStreamBasicDescription MakeFloat32Format(UInt32 channels)
+{
+    AudioStreamBasicDescription format {};
+
+    format.mSampleRate       = SampleRate;
+    format.mFormatID         = kAudioFormatLinearPCM;
+    format.mFormatFlags      = kAudioFormatFlagIsFloat | kAudioFormatFlagsNativeEndian
+                             | kAudioFormatFlagIsPacked;
+    format.mBitsPerChannel   = 32;
+    format.mChannelsPerFrame = channels;
+    format.mFramesPerPacket  = 1;
+    format.mBytesPerFrame    = channels * sizeof(Float32);
+    format.mBytesPerPacket   = channels * sizeof(Float32);
+
+    return format;
+}
+
 std::shared_ptr<aspl::Driver> CreateDriver()
 {
-    auto context = std::make_shared<aspl::Context>();
+    // Trace to syslog. A HAL plugin that coreaudiod rejects produces no device and no log
+    // line of its own, which is the single hardest thing about this whole exercise — every
+    // failure looks identical from outside. With this on, the property calls and their
+    // answers land in `log stream --predicate 'sender == "MixerReturn"'`, so a rejected
+    // device can be read rather than guessed at.
+    auto tracer = std::make_shared<aspl::Tracer>(
+        aspl::Tracer::Mode::Syslog, aspl::Tracer::Style::Hierarchical);
+
+    auto context = std::make_shared<aspl::Context>(tracer);
 
     aspl::DeviceParameters params;
     params.Name         = "MixerReturn";
@@ -162,16 +189,19 @@ std::shared_ptr<aspl::Driver> CreateDriver()
     auto device = std::make_shared<aspl::Device>(context, params);
 
     // Outputs are the Sum ports; inputs are the summed buses coming back.
+    //
+    // The whole format has to be rebuilt, not just the channel count. libASPL's default is
+    // Int16 stereo with mBytesPerFrame = 4; setting only mChannelsPerFrame leaves a
+    // description whose byte counts contradict its channel count, and the device then
+    // opens but refuses to start — which reads as a broken device rather than a bad format.
     aspl::StreamParameters sums;
     sums.Direction = aspl::Direction::Output;
-    sums.Format.mChannelsPerFrame = SumPorts;
-    sums.Format.mSampleRate = SampleRate;
+    sums.Format = MakeFloat32Format(SumPorts);
     device->AddStreamWithControlsAsync(sums);
 
     aspl::StreamParameters returns;
     returns.Direction = aspl::Direction::Input;
-    returns.Format.mChannelsPerFrame = BusChannels;
-    returns.Format.mSampleRate = SampleRate;
+    returns.Format = MakeFloat32Format(BusChannels);
     device->AddStreamWithControlsAsync(returns);
 
     device->SetIOHandler(std::make_shared<MixerReturnHandler>());
