@@ -15,6 +15,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <stdio.h>
+#include <string.h>
 
 int main(int argc, const char** argv)
 {
@@ -70,8 +71,17 @@ int main(int argc, const char** argv)
     }
     printf("ok    QueryInterface returned the driver interface\n");
 
-    const OSStatus err = (*driver)->Initialize(driver, (AudioServerPlugInHostRef) NULL);
-    printf("%s    Initialize returned %d\n", err == 0 ? "ok  " : "FAIL", (int) err);
+    /*  Initialize is skipped unless asked for. A real driver may dereference the host
+     *  reference immediately, and there is no host here -- BlackHole segfaults on it. The
+     *  question this tool exists to answer is whether the bundle loads at all, which is
+     *  already answered by the time we get here. */
+    if (argc > 2 && strcmp(argv[2], "--init") == 0) {
+        const OSStatus err = (*driver)->Initialize(driver, (AudioServerPlugInHostRef) NULL);
+        printf("%s    Initialize returned %d\n", err == 0 ? "ok  " : "FAIL", (int) err);
+    } else {
+        printf("skip  Initialize (pass --init to run it; needs a real host to be safe)\n");
+        return 0;
+    }
 
     /*  And the question the device list cannot answer: does the plug-in object actually
      *  own a device? A plug-in that owns nothing publishes nothing. */
