@@ -1,60 +1,81 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Deliberately a separate build from the plugin at the repo root. This produces a
-# CFBundle that coreaudiod loads, not a JUCE target, and it shares no code with the
-# plugin — only the idea.
-project(MixerReturnDevice VERSION 0.1.0 LANGUAGES C)
+# The AudioServerPlugIn. A separate build from the plugin at the repo root: this produces a
+# CFBundle that coreaudiod loads, and shares no code with the plugin — only the idea.
+project(MixerReturnDevice VERSION 0.1.0 LANGUAGES CXX)
 
 if(NOT APPLE)
     message(FATAL_ERROR "The AudioServerPlugIn is macOS-only. Windows is a WDM driver and "
                         "a separate project entirely — see ../AGENTS.md §7.")
 endif()
 
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Universal, for the same reason the plugin is: a host loads whichever slice matches its
-# own process, and coreaudiod's architecture is not ours to choose.
 if(NOT CMAKE_OSX_ARCHITECTURES)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "" FORCE)
 endif()
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS deployment target")
 
-set(MIXERRETURN_VERSION ${PROJECT_VERSION})
-configure_file(Info.plist.in "${CMAKE_CURRENT_BINARY_DIR}/Info.plist" @ONLY)
+# --------------------------------------------------------------------------------------
+# libASPL (MIT) owns the HAL property layer.
+#
+# The first version of this driver answered the HAL's property requests by hand and never
+# loaded — coreaudiod drops a device over a single wrong answer, silently, with nothing in
+# the log and nothing in the device list. That layer is large, unforgiving and not where
+# this project's value is.
+#
+# GIT_TAG is pinned rather than following a branch, and tags are fetched because libASPL
+# derives its own version from `git describe` — a shallow clone without tags fails to
+# configure with a confusing regex error.
+# --------------------------------------------------------------------------------------
+include(FetchContent)
+FetchContent_Declare(libASPL
+    GIT_REPOSITORY https://github.com/gavv/libASPL.git
+    GIT_TAG v3.1.2)
+FetchContent_MakeAvailable(libASPL)
 
-add_library(MixerReturnDriver MODULE src/mr_driver.c src/mr_shared.h)
+set(DRIVER_NAME       "MixerReturn")
+set(DRIVER_VERSION    "${PROJECT_VERSION}")
+set(DRIVER_COPYRIGHT  "MIT licence")
+set(DRIVER_IDENTIFIER "com.allansargeant.mixerreturn.driver")
+set(DRIVER_ENTRYPOINT "MixerReturnEntryPoint")
 
-set_target_properties(MixerReturnDriver PROPERTIES
-    OUTPUT_NAME "MixerReturn"
-    BUNDLE TRUE
+# Generated per configure, never hand-written. A factory UUID identifies this plug-in to
+# CFPlugIn; reusing one that another bundle on this machine has already claimed makes the
+# bundle unloadable, which is indistinguishable from every other silent HAL failure.
+if(NOT DRIVER_UID)
+    execute_process(COMMAND uuidgen OUTPUT_VARIABLE DRIVER_UID OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(DRIVER_UID "${DRIVER_UID}" CACHE STRING "CFPlugIn factory UUID" FORCE)
+endif()
+message(STATUS "MixerReturn driver factory UUID: ${DRIVER_UID}")
+
+add_library(${DRIVER_NAME} MODULE src/Driver.cpp)
+target_link_libraries(${DRIVER_NAME} PRIVATE libASPL)
+
+find_library(LIB_CoreFoundation CoreFoundation REQUIRED)
+find_library(LIB_CoreAudio CoreAudio REQUIRED)
+target_link_libraries(${DRIVER_NAME} PRIVATE ${LIB_CoreFoundation} ${LIB_CoreAudio})
+
+# PREFIX/SUFFIX cleared because a MODULE library is otherwise "libMixerReturn.so", and the
+# executable name has to match CFBundleExecutable. MACOSX_BUNDLE *and* BUNDLE are both
+# needed — setting only BUNDLE was one of the defects in the hand-written version.
+set_target_properties(${DRIVER_NAME} PROPERTIES
+    OUTPUT_NAME "${DRIVER_NAME}"
+    PREFIX "" SUFFIX ""
+    BUNDLE true
+    MACOSX_BUNDLE ON
     BUNDLE_EXTENSION "driver"
-    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
-    # coreaudiod dlopens the bundle and looks the factory up by name, so it has to survive
-    # into the symbol table rather than being stripped as unreferenced.
-    LINK_FLAGS "-Wl,-exported_symbol,_MixerReturnCreate")
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
+    MACOSX_BUNDLE_BUNDLE_NAME "${DRIVER_NAME}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${DRIVER_VERSION}"
+    MACOSX_BUNDLE_COPYRIGHT "${DRIVER_COPYRIGHT}"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "${DRIVER_IDENTIFIER}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${DRIVER_VERSION}")
 
-target_compile_options(MixerReturnDriver PRIVATE
-    -Wall -Wextra -Wno-unused-parameter
-    # The IO path runs on a realtime thread. -ffast-math would be a false economy here;
-    # correctness of the sum matters more than a few cycles.
-    -O2)
-
-target_link_libraries(MixerReturnDriver PRIVATE
-    "-framework CoreAudio" "-framework CoreFoundation")
-
-# --------------------------------------------------------------------------------------
-# Signing, which is not optional here.
-#
-# coreaudiod will not load an unsigned HAL plugin, and — this is the part that costs an
-# afternoon — it fails *silently*: the driver simply never appears in the device list, with
-# nothing in the log to say why. The linker's own ad-hoc signature on the executable is not
-# enough; `codesign -v` on the bundle reports "code object is not signed at all", because
-# the bundle wrapper is a separate thing from the Mach-O inside it.
-#
-# Identity comes from the machine-local release config if it is there, so a dev box signs
-# with Developer ID and CI falls back to ad-hoc rather than failing to configure.
-# --------------------------------------------------------------------------------------
+# Signing is not optional: coreaudiod will not load an unsigned HAL plugin, and says so by
+# simply not showing the device. Developer ID on this Mac, ad-hoc anywhere else.
 set(MR_SIGN_IDENTITY "-" CACHE STRING "codesign identity for the driver bundle")
 if(EXISTS "$ENV{HOME}/.config/stoatworks/release-signing.env" AND MR_SIGN_IDENTITY STREQUAL "-")
     file(STRINGS "$ENV{HOME}/.config/stoatworks/release-signing.env" _mr_env
@@ -64,45 +85,10 @@ if(EXISTS "$ENV{HOME}/.config/stoatworks/release-signing.env" AND MR_SIGN_IDENTI
     endif()
 endif()
 
-add_custom_command(TARGET MixerReturnDriver POST_BUILD
-    COMMAND codesign --force --sign "${MR_SIGN_IDENTITY}" --timestamp --options runtime
-            "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
-    # Verify rather than trust the exit code above: a signature that codesign writes
-    # happily can still fail to validate, and an invalid one loads exactly as well as no
-    # signature at all, which is to say not at all and without saying so.
-    COMMAND codesign --verify --strict "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
-    # Then prove the result is loadable, rather than finding out via a root install and a
-    # coreaudiod restart that ends in an empty device list. mrprobe does what coreaudiod
-    # does -- CFBundle, CFPlugIn instance, QueryInterface, Initialize -- and exits non-zero
-    # on the first step that fails, which fails the build.
-    # (probe moved out of POST_BUILD - see the mr_check target below)
-    COMMAND ${CMAKE_COMMAND} -E echo
-        "signed and probed OK - install needs root, see README.md"
-    # VERBATIM, because the identity contains spaces and parentheses -- "Developer ID
-    # Application: NAME (TEAMID)" -- and without it CMake hands the bare string to the
-    # shell, which reads the brackets as syntax and leaves the bundle unsigned.
-    VERBATIM)
-
-# --------------------------------------------------------------------------------------
-# mrprobe — loads the driver the way coreaudiod does, in a process that can be debugged.
-#
-# Kept in the build because the failure it catches is completely silent: a HAL plugin that
-# coreaudiod will not load produces no log line and no device, which is indistinguishable
-# from a driver that loaded and published nothing. This separates the two in a second,
-# with no root install and no coreaudiod restart.
-# --------------------------------------------------------------------------------------
-add_executable(mrprobe tools/mrprobe.c)
-target_link_libraries(mrprobe PRIVATE "-framework CoreFoundation" "-framework CoreAudio")
-add_dependencies(MixerReturnDriver mrprobe)
-
-# `cmake --build build --target mr_check` — probe without risking the artefact.
-#
-# NOT a POST_BUILD step, and that distinction cost hours. As POST_BUILD, a failing probe
-# makes the build fail, and make then deletes the target it just linked — leaving a bundle
-# with an empty Contents/MacOS. Every probe after that failed for a completely different
-# reason (no executable) than the original, which is what made the diagnosis flip between
-# runs and sent the whole investigation in circles.
-add_custom_target(mr_check
-    COMMAND "$<TARGET_FILE:mrprobe>" "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
-    DEPENDS MixerReturnDriver mrprobe
+add_custom_command(TARGET ${DRIVER_NAME} POST_BUILD
+    COMMAND codesign --force --sign "${MR_SIGN_IDENTITY}" --timestamp
+            "$<TARGET_BUNDLE_DIR:${DRIVER_NAME}>"
+    COMMAND codesign --verify --strict "$<TARGET_BUNDLE_DIR:${DRIVER_NAME}>"
+    # VERBATIM: the identity contains spaces and parentheses, and without it the shell
+    # reads the brackets as syntax and leaves the bundle unsigned.
     VERBATIM)
