@@ -29,6 +29,8 @@ MixerReturnAudioProcessor::MixerReturnAudioProcessor()
 
 MixerReturnAudioProcessor::~MixerReturnAudioProcessor()
 {
+    stopTimer();
+
     apvts.removeParameterListener (mr::params::busSelect, this);
     apvts.removeParameterListener (mr::params::outputMode, this);
 
@@ -41,6 +43,19 @@ void MixerReturnAudioProcessor::parameterChanged (const juce::String&, float)
     triggerAsyncUpdate();
 }
 
+int MixerReturnAudioProcessor::latencyForCurrentMode() const noexcept
+{
+    const auto mode = (mr::params::OutputMode) (int) *apvts.getRawParameterValue (mr::params::outputMode);
+
+    if (mode == mr::params::OutputMode::input)
+        return 0;
+
+    // One processBlock call of delay — the actual call length, not the maximum the host
+    // prepared for. Until a block has been seen, preparedBlock is the best guess available.
+    const auto actual = observedBlock.load (std::memory_order_relaxed);
+    return actual > 0 ? actual : preparedBlock;
+}
+
 void MixerReturnAudioProcessor::handleAsyncUpdate()
 {
     const auto wanted = (int) *apvts.getRawParameterValue (mr::params::busSelect);
@@ -48,14 +63,22 @@ void MixerReturnAudioProcessor::handleAsyncUpdate()
     if (wanted != requestedBus)
         moveToBus (wanted);
 
-    const auto mode = (mr::params::OutputMode) (int) *apvts.getRawParameterValue (mr::params::outputMode);
-    const auto wantedLatency = (mode == mr::params::OutputMode::input) ? 0 : preparedBlock;
+    const auto wantedLatency = latencyForCurrentMode();
 
     if (wantedLatency != reportedLatency)
     {
         reportedLatency = wantedLatency;
         setLatencySamples (reportedLatency);
     }
+}
+
+void MixerReturnAudioProcessor::timerCallback()
+{
+    // The host's actual block size is only knowable from inside processBlock, and
+    // setLatencySamples must not be called from there. Poll instead: this settles one tick
+    // after audio starts and then never changes again unless the host changes block size.
+    if (latencyForCurrentMode() != reportedLatency)
+        triggerAsyncUpdate();
 }
 
 void MixerReturnAudioProcessor::moveToBus (int newBusIndex)
@@ -98,15 +121,25 @@ void MixerReturnAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     preparedBlock = samplesPerBlock;
     scratch.setSize (mr::maxChannels, samplesPerBlock, false, true, false);
 
+    // Deliberately *not* clearing observedBlock here.
+    //
+    // Reporting a latency change makes the host re-prepare the plugin, so clearing it
+    // created a feedback loop with SuperRack: prepare(2048) -> report 2048 -> process(256)
+    // -> timer reports 256 -> host re-prepares -> forget -> report 2048 again, ten times a
+    // second, churning a bus slot on every pass. Carrying the previous run's block size
+    // over means the second prepare already reports the right number, setLatencySamples
+    // sees no change, and the host stops being told anything.
     moveToBus ((int) *apvts.getRawParameterValue (mr::params::busSelect));
 
-    const auto mode = (mr::params::OutputMode) (int) *apvts.getRawParameterValue (mr::params::outputMode);
-    reportedLatency = (mode == mr::params::OutputMode::input) ? 0 : preparedBlock;
+    reportedLatency = latencyForCurrentMode();
     setLatencySamples (reportedLatency);
+
+    startTimerHz (10);
 }
 
 void MixerReturnAudioProcessor::releaseResources()
 {
+    stopTimer();
     leaveBus();
 }
 
@@ -126,6 +159,10 @@ void MixerReturnAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     const auto numSamples  = buffer.getNumSamples();
     const auto numChannels = juce::jmin (buffer.getNumChannels(), mr::maxChannels);
+
+    // What the delay through the bus actually is. A plain relaxed store: the timer on the
+    // message thread is what turns this into a latency report.
+    observedBlock.store (numSamples, std::memory_order_relaxed);
 
     for (int ch = buffer.getNumChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, numSamples);
@@ -198,6 +235,8 @@ void MixerReturnAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& 
     // never completes and every other member freezes one block behind forever.
     const auto numSamples  = buffer.getNumSamples();
     const auto numChannels = juce::jmin (buffer.getNumChannels(), mr::maxChannels);
+
+    observedBlock.store (numSamples, std::memory_order_relaxed);
 
     const auto current = assignment.load (std::memory_order_acquire);
 

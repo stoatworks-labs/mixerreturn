@@ -7,7 +7,8 @@
 
 class MixerReturnAudioProcessor : public juce::AudioProcessor,
                                   private juce::AudioProcessorValueTreeState::Listener,
-                                  private juce::AsyncUpdater
+                                  private juce::AsyncUpdater,
+                                  private juce::Timer
 {
 public:
     MixerReturnAudioProcessor();
@@ -51,9 +52,13 @@ public:
 private:
     void parameterChanged (const juce::String& id, float newValue) override;
     void handleAsyncUpdate() override;
+    void timerCallback() override;
 
     void moveToBus (int newBusIndex);
     void leaveBus();
+
+    /** Latency this instance should report, in samples, for the current output mode. */
+    int latencyForCurrentMode() const noexcept;
 
     /** Bus and slot packed into one word so the audio thread can read the pair atomically.
 
@@ -77,6 +82,19 @@ private:
 
     int reportedLatency = 0;
     int preparedBlock   = 0;
+
+    /** The block size the host actually calls us with, which is not necessarily the one it
+        prepared us for.
+
+        The delay through the two-page bus is one `processBlock` call, so it is this number
+        and not `preparedBlock` that must be reported. SuperRack Performer prepares with
+        2048 and then processes 256, so reporting `preparedBlock` overstated the latency by
+        a factor of eight — 42.7 ms instead of 5.3 ms — and the host believed it.
+
+        Written by the audio thread as a plain relaxed store (no branch, no allocation, no
+        message post) and read by the timer on the message thread, which is the only place
+        allowed to call setLatencySamples. */
+    std::atomic<int> observedBlock { 0 };
 
     juce::AudioBuffer<float> scratch;
 

@@ -171,6 +171,73 @@ void testLatencyReporting()
            "the summing instance reports one block (" + juce::String (blockSize) + " samples)");
 }
 
+/** A host may prepare for a maximum block size and then call processBlock with a smaller
+    one. SuperRack Performer does exactly that — prepares 2048, processes 256 — and an
+    earlier version reported the prepared maximum, claiming 42.7 ms of latency for a bus
+    that actually delays by 5.3 ms. The host believed it: the rack's LTNC readout showed
+    42.7 ms.
+
+    Every other test here prepares and processes at the same size, which is precisely why
+    none of them could see it. */
+void testLatencyFollowsActualBlockSize()
+{
+    std::printf ("\n-- reported latency when the host's block differs from the prepared maximum --\n");
+
+    constexpr int preparedMax = 2048;
+    constexpr int actualBlock = 256;
+    constexpr int busIndex    = 6;
+
+    auto makeInstance = [] (mr::params::OutputMode mode, bool sends)
+    {
+        auto p = std::make_unique<MixerReturnAudioProcessor>();
+        setChoice (*p, mr::params::busSelect, busIndex, mr::numBuses);
+        setChoice (*p, mr::params::outputMode, (int) mode, 3);
+        setBool (*p, mr::params::sendEnable, sends);
+        setBool (*p, mr::params::sendMute, false);
+        p->setPlayConfigDetails (2, 2, sampleRate, preparedMax);
+        p->prepareToPlay (sampleRate, preparedMax);
+        return p;
+    };
+
+    auto sender = makeInstance (mr::params::OutputMode::input, true);
+    auto master = makeInstance (mr::params::OutputMode::busSum, false);
+
+    juce::AudioBuffer<float> senderStore (2, preparedMax), masterStore (2, preparedMax);
+    juce::MidiBuffer midi;
+
+    auto runBlock = [&] (float value)
+    {
+        senderStore.clear();
+        masterStore.clear();
+
+        juce::AudioBuffer<float> sv (senderStore.getArrayOfWritePointers(), 2, actualBlock);
+        juce::AudioBuffer<float> mv (masterStore.getArrayOfWritePointers(), 2, actualBlock);
+
+        for (int ch = 0; ch < 2; ++ch)
+            juce::FloatVectorOperations::fill (sv.getWritePointer (ch), value, actualBlock);
+
+        sender->processBlock (sv, midi);
+        master->processBlock (mv, midi);
+        return mv.getSample (0, 0);
+    };
+
+    runBlock (0.25f);
+    checkClose (runBlock (0.75f), 0.25f,
+                "the sum is delayed by one processed block, not one prepared block");
+
+    // setLatencySamples belongs to the message thread, so the correction arrives on a timer.
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+
+    check (master->getLatencySamples() == actualBlock,
+           "the summing instance reports the block the host actually uses ("
+               + juce::String (actualBlock) + "), not the maximum it prepared for ("
+               + juce::String (preparedMax) + ")");
+    check (sender->getLatencySamples() == 0, "a passthrough sender still reports 0");
+
+    sender->releaseResources();
+    master->releaseResources();
+}
+
 void testTrimAndMute()
 {
     std::printf ("\n-- send trim and mute --\n");
@@ -413,6 +480,7 @@ int main()
     testOrderIndependence (false);
     testOrderIndependence (true);
     testLatencyReporting();
+    testLatencyFollowsActualBlockSize();
     testTrimAndMute();
     testBypassStillArrives();
     testBusIsolation();

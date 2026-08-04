@@ -101,6 +101,9 @@ target_compile_definitions(mrtest PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
+    # Needed to pump the message loop so the timer that corrects the reported latency can
+    # run — see testLatencyFollowsActualBlockSize.
+    JUCE_MODAL_LOOPS_PERMITTED=1
     DIAG_GIT_REV="${MIXERRETURN_GIT_REV}")
 target_include_directories(mrtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mrtest PRIVATE MixerReturn juce::juce_audio_utils)
