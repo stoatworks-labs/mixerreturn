@@ -43,9 +43,37 @@ target_compile_options(MixerReturnDriver PRIVATE
 target_link_libraries(MixerReturnDriver PRIVATE
     "-framework CoreAudio" "-framework CoreFoundation")
 
-# The bundle extension has to be .driver, and CMake's BUNDLE_EXTENSION only renames the
-# directory — the executable inside still needs to be where Info.plist says it is, which
-# the default CFBundle layout already handles.
+# --------------------------------------------------------------------------------------
+# Signing, which is not optional here.
+#
+# coreaudiod will not load an unsigned HAL plugin, and — this is the part that costs an
+# afternoon — it fails *silently*: the driver simply never appears in the device list, with
+# nothing in the log to say why. The linker's own ad-hoc signature on the executable is not
+# enough; `codesign -v` on the bundle reports "code object is not signed at all", because
+# the bundle wrapper is a separate thing from the Mach-O inside it.
+#
+# Identity comes from the machine-local release config if it is there, so a dev box signs
+# with Developer ID and CI falls back to ad-hoc rather than failing to configure.
+# --------------------------------------------------------------------------------------
+set(MR_SIGN_IDENTITY "-" CACHE STRING "codesign identity for the driver bundle")
+if(EXISTS "$ENV{HOME}/.config/stoatworks/release-signing.env" AND MR_SIGN_IDENTITY STREQUAL "-")
+    file(STRINGS "$ENV{HOME}/.config/stoatworks/release-signing.env" _mr_env
+         REGEX "^RL_MAC_SIGN_IDENTITY=")
+    if(_mr_env)
+        string(REGEX REPLACE "^RL_MAC_SIGN_IDENTITY=\"?([^\"]*)\"?$" "\\1" MR_SIGN_IDENTITY "${_mr_env}")
+    endif()
+endif()
+
 add_custom_command(TARGET MixerReturnDriver POST_BUILD
+    COMMAND codesign --force --sign "${MR_SIGN_IDENTITY}" --timestamp --options runtime
+            "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
+    # Verify rather than trust the exit code above: a signature that codesign writes
+    # happily can still fail to validate, and an invalid one loads exactly as well as no
+    # signature at all, which is to say not at all and without saying so.
+    COMMAND codesign --verify --strict "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
     COMMAND ${CMAKE_COMMAND} -E echo
-        "built $<TARGET_BUNDLE_DIR:MixerReturnDriver> - install needs root, see README.md")
+        "signed with '${MR_SIGN_IDENTITY}' - install needs root, see README.md"
+    # VERBATIM, because the identity contains spaces and parentheses -- "Developer ID
+    # Application: NAME (TEAMID)" -- and without it CMake hands the bare string to the
+    # shell, which reads the brackets as syntax and leaves the bundle unsigned.
+    VERBATIM)
