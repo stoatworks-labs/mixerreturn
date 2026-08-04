@@ -50,18 +50,41 @@ It adds an automixer to a desk without taking anything away from it.
 
 ## The signal flow
 
+**It is two racks per mic, not one.** SuperRack's Dugan Automixer is part of a rack's
+*output stage* — it sits after all eight plugin slots, and there is no Dugan you can insert
+as a plugin. So nothing you put in a rack can be downstream of it, MixerReturn included. A
+MixerReturn sharing a rack with the Dugan sends the signal from *before* the automixer, and
+your return carries a plain sum with no automixing in it at all.
+
+The fix is to let the first rack finish, and pick the automixed signal back up in a second:
+
 ```
 SQ channels 1-24
   |  direct outs, set to follow the fader
   v
 SLink / Dante / Waves card  ---->  SuperRack Performer
-                                     Rack 1..24:  Dugan Automixer -> MixerReturn (Send)
-                                     Rack 25:                       MixerReturn (Bus Sum)
-                                                                          |
-SQ mix "External Input"  <-------------------------------------------------
+                                     Rack 1..24:   [your plugins] -> Dugan (output stage)
+                                                          |  output patch
+                                                          v
+                                                     loopback I/O
+                                                          |
+                                     Rack 25..48:  MixerReturn (Send)
+                                     Rack 49:      MixerReturn (Bus Sum)
+                                                          |
+SQ mix "External Input"  <---------------------------------
 ```
 
+The loopback is the cost of this arrangement: each Dugan rack's output has to reach a
+MixerReturn rack's input, which needs a spare I/O pair per mic on the machine's interface, or
+a virtual audio device that offers loopback ports.
+
 The operator keeps working ordinary channel strips. Dugan sees post-fader signals.
+
+> **Why this is worth knowing before you patch anything.** It is not a subtle difference you
+> would catch by ear. With the automixer bypassed in the return path the sum still sounds
+> like the mics, just without any gain sharing — which is exactly what a plain sum sounds
+> like. Measured on the bench: with two channels open, the rack outputs were automixed to
+> −4.39 dB while a same-rack MixerReturn's sum carried them at +0.02 dB, unattenuated.
 
 ---
 
@@ -69,8 +92,8 @@ The operator keeps working ordinary channel strips. Dugan sees post-fader signal
 
 Sending and receiving are independent, so an instance can be a sender, a receiver, or both.
 
-**On each channel**, after the automixer: **Send** enabled, **Output** set to `Input` so the rack
-passes its own audio through.
+**On each MixerReturn rack** — the second rack, fed from a Dugan rack's output: **Send**
+enabled, **Output** set to `Input` so the rack passes its own audio through.
 
 ![A channel instance: Bus 1 selected, Send enabled, Mute off, send trim at 0.0 dB, the send meter showing programme level, Output set to Input, and a readout of 25 members on this bus.](screenshots/send.png)
 
@@ -111,7 +134,12 @@ but *uneven* delay across channels would comb-filter the sum. See [DESIGN.md](DE
 
 ## Setting it up on an Allen & Heath SQ
 
-Two console-side details that will bite otherwise.
+One SuperRack-side detail and two console-side ones, all of which will bite otherwise.
+
+> **Budget two racks and a loopback pair per mic**, per "The signal flow" above. Twenty-four
+> automixed mics means forty-eight racks plus a return rack, and twenty-four loopback pairs.
+> Check the interface has the I/O before committing to a channel count — this is the
+> constraint most likely to decide how many mics you can automix on a given rig.
 
 > **"Follow Fader" on direct outs is global across all 48 channels.** There is no post-fader tap
 > point; post-fader comes from that one switch, and it is all-or-nothing.

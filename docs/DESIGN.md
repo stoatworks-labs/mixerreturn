@@ -16,6 +16,15 @@ MixerReturn exists to enable a third arrangement:
 3. **Sum the automixed channels** down to one signal.
 4. Return that sum to the desk as a mix's **External Input**.
 
+Step 3 needs a **second rack per channel**, which is not obvious and is easy to get wrong.
+SuperRack's Dugan is part of a rack's *output stage* — it sits after all eight plugin slots,
+and no Dugan is available to insert as a plugin — so nothing in a rack can be downstream of
+it. A MixerReturn sharing a rack with the Dugan therefore taps the signal *before* the
+automixer. Measured on the bench with two channels open: the rack outputs were automixed to
+−4.39 dB while a same-rack MixerReturn's sum carried them at +0.02 dB, and moving it to the
+last of the eight slots changed nothing. The automixed signal has to be brought back in over
+a loopback pair to a second rack, where a MixerReturn can see it.
+
 The operator keeps working ordinary channel strips. Dugan sees post-fader signals. No
 insert slots are consumed and no channel is used twice. Step 3 is the only piece that
 neither the desk nor the plugin host provides — which is what this is.

@@ -103,14 +103,25 @@ SQ channels 1-24
   |  direct outs, set to follow the fader
   v
 SLink / Dante / Waves card  ---->  SuperRack Performer
-                                     Rack 1..24:  Dugan Automixer -> MixerReturn (Send)
-                                     Rack 25:                       MixerReturn (Bus Sum)
+                                     Rack 1..24:   [your plugins] -> Dugan (output stage)
+                                                          |  output patch, then loopback I/O
+                                                          v
+                                     Rack 25..48:  MixerReturn (Send)
+                                     Rack 49:      MixerReturn (Bus Sum)
                                                                           |
 SQ mix "External Input"  <-------------------------------------------------
 ```
 
 The operator keeps working ordinary channel strips. Dugan sees post-fader signals. No
 insert slots are consumed and no channel is used twice.
+
+**It is two racks per mic.** SuperRack's Dugan is part of a rack's *output stage*, after all
+eight plugin slots, and there is no Dugan to insert as a plugin — so nothing in a rack can be
+downstream of it. A MixerReturn sharing a rack with the Dugan sends the signal from *before*
+the automixer, and the return carries a plain sum with no automixing in it. Measured: rack
+outputs automixed to −4.39 dB while a same-rack MixerReturn's sum carried them at +0.02 dB.
+The second rack, fed over a loopback pair, is what picks the automixed signal back up. See
+[the user guide](docs/USER-GUIDE.md#the-signal-flow).
 
 ## Why this exists
 
@@ -171,12 +182,22 @@ summing bus, `mrhost` runs that same check through the built VST3 as a host woul
 
 ## Status
 
-v0.1.0. The summing bus is verified numerically — including 24 senders with the processing
+v0.3.0. The summing bus is verified numerically — including 24 senders with the processing
 order reshuffled on every block, and 17 instances processing concurrently on their own
 threads — it is clean under ThreadSanitizer, `pluginval` passes at strictness 8, and the
 built VST3 has been loaded as a host loads it, confirming that instances created from one
-bundle really do share a bus. But it **has not been run inside SuperRack Performer, or
-against a real SQ**. Nothing here has been near a live show.
+bundle really do share a bus.
+
+**It has now also been run with real audio inside SuperRack Performer** (v15.15.12, 48 kHz,
+256-sample buffer, I/O over a loopback virtual device). Pass-through is bit-exact and adds no
+delay; the sum equals the sum of its senders delayed by exactly one block, uniform across
+every sender, with 0 of 143744 samples in error; −6 dB of send trim comes back as −6.00 dB;
+a muted send comes back as exactly zero; a bypassed instance contributes zero without wedging
+the barrier. That testing is also what found the two-rack topology above, and a latency
+report that was eight times too high.
+
+It has **not** been run against a real SQ or any console. Nothing here has been near a live
+show, and every claim about console behaviour still comes from the reference guide.
 
 That concurrent test earned its place: it found a real bug that every sequential test
 passed straight through. The audio path used to take a process-wide try-lock and skip the

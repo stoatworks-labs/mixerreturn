@@ -2,7 +2,7 @@
 
 An interface for Waves SuperRack Performer: a shared summing bus across plugin instances, so
 a Dugan Automixer can run on a console's direct outs and return the automixed result as a
-single stereo pair to a group's External Input. VST3/AU/Standalone, JUCE/C++, CMake. v0.1.0.
+single stereo pair to a group's External Input. VST3/AU/Standalone, JUCE/C++, CMake. v0.3.0.
 Phase 1 of two; Phase 2 is the virtual audio device (see AGENTS.md §7).
 
 **Lead with what it doesn't cost:** working on direct outs rather than inserts leaves the
@@ -26,7 +26,7 @@ without moving any insert points, and uses one channel strip per mic.
 - `Source/DSP/SummingBus.{h,cpp}` has no JUCE dependency. Keep it that way; it makes the bus
   testable on its own and portable into Phase 2's driver.
 - PUBLIC at `stoatworks-labs/mixerreturn`, and listed at
-  stoatworks-labs.com/software/mixerreturn/. Ships the AI disclaimer. Not yet tagged.
+  stoatworks-labs.com/software/mixerreturn/. Ships the AI disclaimer.
   "Commit" = commit **and** push.
 
 ## The rule that matters
