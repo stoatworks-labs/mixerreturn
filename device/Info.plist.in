@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>          <string>en</string>
+    <key>CFBundleExecutable</key>                 <string>MixerReturn</string>
+    <key>CFBundleIdentifier</key>                 <string>com.allansargeant.mixerreturn.driver</string>
+    <key>CFBundleInfoDictionaryVersion</key>      <string>6.0</string>
+    <key>CFBundleName</key>                       <string>MixerReturn</string>
+    <key>CFBundlePackageType</key>                <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>         <string>@MIXERRETURN_VERSION@</string>
+    <key>CFBundleVersion</key>                    <string>@MIXERRETURN_VERSION@</string>
+    <key>NSHumanReadableCopyright</key>           <string>MIT licence</string>
+
+    <!-- How coreaudiod finds the driver. The factory UUID is this bundle's own, generated
+         once and never changed: it is the identity the HAL caches, so a new one on an
+         existing install looks like a different driver. The type UUID is Apple's, and is
+         the same for every AudioServerPlugIn in existence. -->
+    <key>CFPlugInFactories</key>
+    <dict>
+        <key>C4E4A9E1-6B2F-4E7C-9D3A-1F5B8E2C7A40</key>
+        <string>MixerReturnCreate</string>
+    </dict>
+    <key>CFPlugInTypes</key>
+    <dict>
+        <key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key>
+        <array>
+            <string>C4E4A9E1-6B2F-4E7C-9D3A-1F5B8E2C7A40</string>
+        </array>
+    </dict>
+</dict>
+</plist>
