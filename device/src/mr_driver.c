@@ -57,8 +57,8 @@ static UInt32           gRefCount   = 0;
 static AudioServerPlugInHostRef gHost = NULL;
 
 /*  The shared region. Mapped once at Initialize; the helper may not exist yet, in which
- *  case gShm stays NULL and the device reports itself as having no channels rather than
- *  pretending to be a working interface. */
+ *  case gShm stays NULL, the device falls back to the layout in RefreshFromHelper and its
+ *  IO path produces silence. */
 static MRShared*        gShm    = NULL;
 static int              gShmFd  = -1;
 
@@ -85,17 +85,23 @@ static inline UInt32 TotalInputChannels(void)   { return gNumInputs; }
  */
 static void RefreshFromHelper(void)
 {
-    if (gShm == NULL || gShm->version != MR_SHM_VERSION) {
-        gNumInputs = gNumOutputs = gNumSums = 0;
-        return;
-    }
-
-    const uint32_t state = atomic_load(&gShm->helperState);
-    if (state != MR_HELPER_RUNNING) {
-        /*  No hardware behind us. Report no channels rather than a plausible-looking
-         *  device: a wrapper that accepts IO with nothing attached silently swallows
-         *  whatever a host sends it, and the host has no way to tell. */
-        gNumInputs = gNumOutputs = gNumSums = 0;
+    /*  The fallback layout, used until the helper reports what it actually wrapped.
+     *
+     *  This started out as "report zero channels when no helper is running", on the
+     *  reasoning that a wrapper with nothing behind it should not look like a working
+     *  interface. That was wrong in a way that cost an install cycle to find: a device
+     *  with no streams is one the HAL does not publish at all, so the driver loaded
+     *  correctly and simply never appeared, which looks identical to not loading.
+     *
+     *  A virtual device exists whether or not hardware is behind it. Honesty about the
+     *  helper belongs in the control surface and in what the IO path produces — silence,
+     *  below — not in pretending the device is absent. */
+    if (gShm == NULL || gShm->version != MR_SHM_VERSION
+        || atomic_load(&gShm->helperState) != MR_HELPER_RUNNING) {
+        gNumInputs  = 8;
+        gNumOutputs = 8;
+        gNumSums    = 8;
+        gSampleRate = 48000.0;
         return;
     }
 
@@ -303,11 +309,10 @@ static OSStatus MR_StartIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt3
     RefreshFromHelper();
     pthread_mutex_unlock(&gStateMutex);
 
-    /*  Refusing to start with no helper is the honest answer: the alternative is a device
-     *  that opens, meters nothing and passes nothing, which reads to a user as "the app is
-     *  broken" rather than "the driver has no hardware". */
-    if (gShm == NULL || atomic_load(&gShm->helperState) != MR_HELPER_RUNNING)
-        return kAudioHardwareNotRunningError;
+    /*  Starts regardless of the helper. Refusing here was the same mistake as reporting
+     *  zero channels: a device that cannot be started cannot be selected, inspected or
+     *  debugged, and "not selectable" is indistinguishable from "not installed". With no
+     *  helper the IO path simply produces silence. */
 
     gAnchorHostTime   = mach_absolute_time();
     gAnchorSampleTime = 0;
@@ -383,7 +388,15 @@ static OSStatus MR_DoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID id,
 {
     (void)d; (void)client; (void)cycle; (void)secondaryBuffer;
     if (id != kObjectID_Device) return kAudioHardwareBadObjectError;
-    if (gShm == NULL || mainBuffer == NULL) return 0;
+    if (mainBuffer == NULL) return 0;
+
+    /*  No helper: hand back silence rather than whatever was in the buffer. An
+     *  uninitialised input buffer is not silence, it is the previous cycle's audio. */
+    if (gShm == NULL) {
+        if (operation == kAudioServerPlugInIOOperationReadInput)
+            memset(mainBuffer, 0, (size_t) frames * TotalInputChannels() * sizeof(float));
+        return 0;
+    }
 
     float* buf = (float*) mainBuffer;
 
@@ -575,7 +588,9 @@ static OSStatus MR_GetPropertyDataSize(AudioServerPlugInDriverRef d, AudioObject
             *outSize = sizeof(AudioStreamRangedDescription); return 0;
 
         case kAudioObjectPropertyOwnedObjects:
-            *outSize = (id == kObjectID_Device) ? (2 * sizeof(AudioObjectID)) : 0;
+            *outSize = (id == kObjectID_Device) ? (2 * sizeof(AudioObjectID))
+                     : (id == kObjectID_PlugIn) ? (1 * sizeof(AudioObjectID))
+                     : 0;
             return 0;
         case kAudioPlugInPropertyDeviceList:
         case kAudioPlugInPropertyTranslateUIDToDevice:
@@ -672,12 +687,20 @@ static OSStatus MR_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID i
             *outSize = sizeof(AudioObjectID); return 0;
 
         case kAudioObjectPropertyOwnedObjects: {
-            if (id != kObjectID_Device) { *outSize = 0; return 0; }
             const UInt32 room = dataSize / sizeof(AudioObjectID);
             AudioObjectID* list = (AudioObjectID*) outData;
             UInt32 n = 0;
-            if (room > n) list[n++] = kObjectID_Stream_Input;
-            if (room > n) list[n++] = kObjectID_Stream_Output;
+
+            /*  The plug-in owns the device. Returning nothing here is not a harmless
+             *  omission: the HAL walks a plug-in's owned objects to find its devices, so a
+             *  plug-in that owns nothing publishes nothing, and the driver loads perfectly
+             *  while never appearing in the device list. */
+            if (id == kObjectID_PlugIn) {
+                if (room > n) list[n++] = kObjectID_Device;
+            } else if (id == kObjectID_Device) {
+                if (room > n) list[n++] = kObjectID_Stream_Input;
+                if (room > n) list[n++] = kObjectID_Stream_Output;
+            }
             *outSize = n * sizeof(AudioObjectID); return 0;
         }
 
@@ -706,10 +729,10 @@ static OSStatus MR_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID i
 
         case kAudioDevicePropertyDeviceIsAlive:
             if (dataSize < sizeof(UInt32)) return kAudioHardwareBadPropertySizeError;
-            /*  Alive only when the helper has the hardware. See MR_StartIO for why this
-             *  driver refuses to look healthy with nothing behind it. */
-            *(UInt32*)outData = (gShm != NULL
-                                 && atomic_load(&gShm->helperState) == MR_HELPER_RUNNING) ? 1 : 0;
+            /*  Always alive. IsAlive answers "does this device object exist", not "is
+             *  hardware attached" -- a device that reports itself dead is one the HAL
+             *  hides, which is not the message intended. */
+            *(UInt32*)outData = 1;
             *outSize = sizeof(UInt32); return 0;
 
         case kAudioDevicePropertyDeviceIsRunning:
