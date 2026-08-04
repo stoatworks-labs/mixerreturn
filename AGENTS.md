@@ -214,9 +214,22 @@ passing its I/O through and adding summable virtual ports. It is still the more 
 product and still worth building.
 
 It was deferred because SuperRack Performer gained third-party VST3 hosting in v14, which
-made a plugin sufficient for the actual use case at a fraction of the cost — no
-AudioServerPlugIn to notarize, no nested-ASIO fragility, no Steinberg SDK redistribution
+looked like it made a plugin sufficient for the actual use case at a fraction of the cost —
+no AudioServerPlugIn to notarize, no nested-ASIO fragility, no Steinberg SDK redistribution
 constraint, no EV certificate and Microsoft attestation for a WDM kernel driver.
+
+**§1a retired that reasoning.** A plugin is *not* sufficient for the automixer use case,
+because no plugin slot can sit downstream of the Dugan — the plugin needs a second rack and
+a loopback channel per mic to see the automixed signal at all. The measurement in §1a is
+therefore positive evidence for the Phase 2 architecture rather than merely an argument for
+it: a `Sum` port is fed by the rack's **output patch**, which is downstream of the Dugan
+output stage, so the driver picks up the automixed signal at exactly the point a plugin
+cannot reach. The virtual output port is not a convenience over the plugin here — it is the
+thing that makes the product work as described in §1.
+
+None of which makes the plugin useless. It stays situationally useful for the cases in the
+"what the plugin still gives you" paragraph below, and for summing that does not involve an
+automixer at all, where a single rack is enough and the Dugan constraint never applies.
 
 **The target host is SuperRack Performer, not SoundGrid.** An earlier version of this
 document claimed Phase 2 would cover SuperRack SoundGrid; that was wrong. SoundGrid racks
