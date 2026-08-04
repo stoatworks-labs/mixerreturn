@@ -23,14 +23,14 @@
          the same for every AudioServerPlugIn in existence. -->
     <key>CFPlugInFactories</key>
     <dict>
-        <key>D5B372C2-CDFD-4C3B-BDFD-FEBE8D42B643</key>
+        <key>A95AEE5F-0ECF-419A-96E2-27735FBF18B3</key>
         <string>MixerReturnCreate</string>
     </dict>
     <key>CFPlugInTypes</key>
     <dict>
         <key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key>
         <array>
-            <string>D5B372C2-CDFD-4C3B-BDFD-FEBE8D42B643</string>
+            <string>A95AEE5F-0ECF-419A-96E2-27735FBF18B3</string>
         </array>
     </dict>
 </dict>

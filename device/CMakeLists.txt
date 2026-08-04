@@ -65,17 +65,6 @@ if(EXISTS "$ENV{HOME}/.config/stoatworks/release-signing.env" AND MR_SIGN_IDENTI
 endif()
 
 add_custom_command(TARGET MixerReturnDriver POST_BUILD
-    # Rewrite the Info.plist through plutil before signing.
-    #
-    # Not cosmetic, and not yet fully explained. The plist CMake writes passes `plutil
-    # -lint`, parses correctly, and has exactly the keys a working driver has -- and
-    # CFBundleCreate still refuses to open the bundle, which means coreaudiod cannot look
-    # at it and the device never appears. Rewriting the same content through plutil
-    # produces a bundle that opens. Converting to binary1 is a real rewrite (unlike
-    # `-convert xml1` on a file that is already xml1, which is a no-op), and binary is the
-    # normal form for a plist inside a bundle anyway.
-    COMMAND plutil -convert binary1
-            "$<TARGET_BUNDLE_DIR:MixerReturnDriver>/Contents/Info.plist"
     COMMAND codesign --force --sign "${MR_SIGN_IDENTITY}" --timestamp --options runtime
             "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
     # Verify rather than trust the exit code above: a signature that codesign writes
@@ -86,7 +75,7 @@ add_custom_command(TARGET MixerReturnDriver POST_BUILD
     # coreaudiod restart that ends in an empty device list. mrprobe does what coreaudiod
     # does -- CFBundle, CFPlugIn instance, QueryInterface, Initialize -- and exits non-zero
     # on the first step that fails, which fails the build.
-    COMMAND "$<TARGET_FILE:mrprobe>" "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
+    # (probe moved out of POST_BUILD - see the mr_check target below)
     COMMAND ${CMAKE_COMMAND} -E echo
         "signed and probed OK - install needs root, see README.md"
     # VERBATIM, because the identity contains spaces and parentheses -- "Developer ID
@@ -105,3 +94,15 @@ add_custom_command(TARGET MixerReturnDriver POST_BUILD
 add_executable(mrprobe tools/mrprobe.c)
 target_link_libraries(mrprobe PRIVATE "-framework CoreFoundation" "-framework CoreAudio")
 add_dependencies(MixerReturnDriver mrprobe)
+
+# `cmake --build build --target mr_check` — probe without risking the artefact.
+#
+# NOT a POST_BUILD step, and that distinction cost hours. As POST_BUILD, a failing probe
+# makes the build fail, and make then deletes the target it just linked — leaving a bundle
+# with an empty Contents/MacOS. Every probe after that failed for a completely different
+# reason (no executable) than the original, which is what made the diagnosis flip between
+# runs and sent the whole investigation in circles.
+add_custom_target(mr_check
+    COMMAND "$<TARGET_FILE:mrprobe>" "$<TARGET_BUNDLE_DIR:MixerReturnDriver>"
+    DEPENDS MixerReturnDriver mrprobe
+    VERBATIM)
