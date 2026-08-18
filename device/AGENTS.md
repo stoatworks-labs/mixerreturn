@@ -11,10 +11,27 @@ method and traps.
 
 ## 1. Status, stated plainly
 
-**The driver has never loaded in coreaudiod. Not once, on any build.**
+**The driver loads. `MixerReturn` appears in the device list.** Reached 2026-08-05, in a
+clean VM, behind a passing control — the milestone §5 called "the whole milestone".
 
-Everything else — the design, the shared-memory contract, the control surface, the routing
-model — is in reasonable shape. The driver is not. Do not assume any part of it works.
+Scope that claim carefully. coreaudiod accepts the bundle, publishes the device, and drives
+it: audio written to the Sum ports reaches the driver and **is summed correctly** (§4a). What
+does *not* work is the return leg — the HAL never asks the driver to fill the input buffers,
+so the buses come back as digital silence. The helper daemon does not exist, and nothing has
+been tested in a real host application.
+
+Evidence — every run on a freshly cloned VM, all on 2026-08-05:
+
+| run | build | result |
+|---|---|---|
+| control | libASPL `SinewaveDevice`, Developer ID signed | PASS — `Sinewave Device (libASPL)` |
+| 1 | driver, `ChannelCount = 8` | PASS — `MixerReturn` |
+| 2 | driver, `ChannelCount = 8` | PASS — `MixerReturn` |
+| 3 | driver, `ChannelCount` back at default 2 | PASS — `MixerReturn` |
+| 4 | driver, `ChannelCount = 8` restored — the tree as committed | PASS — `MixerReturn` |
+
+Run 3 is the A/B and it is a **negative** result worth keeping: the channel-count change was
+not what made this work. See §4.
 
 What *is* established, with evidence:
 
@@ -44,6 +61,23 @@ cd ~/Projects/mixerreturn/device
 `--control` installs libASPL's own unmodified `SinewaveDevice`, built and signed identically,
 so the only difference is whose code is inside. **If the control does not pass, nothing the
 harness says about our driver means anything** — fix the harness first.
+
+"Signed identically" only became true on 2026-08-05. The control was being ad-hoc signed
+while the driver carried a Developer ID, because `CMakeLists.txt` resolved the identity into
+a variable that *shadowed* the cache entry rather than updating it — so `CMakeCache.txt` said
+`-` while the bundle got the real certificate. Two variables were moving between control and
+subject, which is precisely what a control exists to prevent. The cache is now written with
+`FORCE` and `vmtest.sh` reads the identity back out of it.
+
+**One difference remains and cannot easily be removed: architecture.** The driver is
+universal; the control is arm64-only, because the example builds libASPL through an
+`ExternalProject` that does not inherit `CMAKE_OSX_ARCHITECTURES` and a universal control
+fails to link. Tried and confirmed — don't repeat it. If the control passes and the driver
+fails, an arm64-only driver is a legitimate next test rather than a guess:
+
+```bash
+cmake -B build-arm64 -S . -DCMAKE_OSX_ARCHITECTURES=arm64 && cmake --build build-arm64
+```
 
 Each run clones a fresh macOS 26 VM. That is deliberate: a driver that half-registers leaves
 CoreAudio in a state where the *next* test lies to you, and the host investigation went in
@@ -107,16 +141,26 @@ where this project's value is. libASPL owns it now.
 - the crosspoint between them, defaulting every Sum port to bus 1 so the device does
   something useful the moment it appears
 
-### Known-suspect area: the stream format
+### RESOLVED: the "stream format" mystery was never real
 
-The last host test showed the device **appear** with libASPL's default format (Int16 stereo,
-inconsistent with the 8 channels requested) and then **not appear** after the format was
-rebuilt as Float32. That is backwards from expectation and is unexplained.
+This section used to record that the device **appeared** with libASPL's default Int16 stereo
+format and **stopped appearing** once the format was rebuilt as Float32 with 8 channels — an
+unexplained result, backwards from expectation, and the top suspect for the whole failure.
 
-`MakeFloat32Format()` derives every byte-count field from the channel count, which is correct
-in isolation — the HAL validates those against each other, and the earlier version opened but
-refused to start precisely because they contradicted. But whether the HAL is now rejecting
-the device for a *different* format reason is exactly what the VM run should answer first.
+**It does not reproduce.** The driver as written loads in a clean VM, and the ChannelCount
+theory built on top of that observation is dead too — run 3 in §1 reverted it to the default
+of 2 and the device still appeared. The A/B was run against a passing control, so it is a
+real negative, not another unsound test.
+
+The honest conclusion: this belongs in §3 with the other host-pollution artefacts. Every one
+of those had the same shape — a decisive-looking result from a machine where a previous
+half-registered driver had left CoreAudio lying to the next test. The lesson is not about
+formats. It is that **nothing measured on the polluted host should have been written down as
+a finding**, and the driver was very likely loadable well before anyone thought it was.
+
+`MakeFloat32Format()` still derives every byte-count field from the channel count, and that
+is still correct — the HAL validates those against each other. Keep it. Just don't credit it
+with fixing anything.
 
 If the VM says the device does not appear, the driver enables libASPL's **syslog tracer**, so
 inside the VM:
@@ -131,16 +175,82 @@ expect faster progress now.
 
 ---
 
+## 4a. The summing works. The bus return is never asked for.
+
+Measured 2026-08-05 with `./tools/vmtest.sh --verify`. `mrio probe` reports an **entirely
+empty** crosspoint matrix — every bus return at −240 dBFS, which is not "quiet", it is exact
+digital zero. But the driver is not idle, and the two instrumented log lines below are the
+whole finding:
+
+```
+[mixerreturn] WriteMixedOutput #1 bytes=16384 frames=512 inPeak=0.200000 bus1Peak=1.551093
+[mixerreturn] OnProcessMixedOutput frames=512 chans=8
+```
+
+`inPeak=0.2` is exactly mrio's `--amp 0.2` test tone arriving on the Sum ports, and
+`bus1Peak=1.55` is eight of them summed. **The output path and the summing arithmetic are
+correct.** `OnReadClientInput`, meanwhile, logs **zero** times — the HAL never asks the driver
+to fill the input buffers, so mrio captures 96000 frames of zeroes that the HAL zero-filled
+itself.
+
+Established, so it need not be re-derived:
+
+- Both streams exist: objectID 3 = output, objectID 6 = input, each with its volume and mute
+  control. `mrio list` in the guest agrees — `MixerReturn  8 in / 8 out @ 48000`.
+- The IO cycle genuinely runs: ~289 `BeginIOOperation`/`EndIOOperation` pairs,
+  `GetZeroTimeStamp` ticking, `StartIO` twice.
+- libASPL's `WillDoIOOperationImpl` advertises `ReadInput` whenever `numInputStreams_ > 0`,
+  and the trace confirms both `AddStreamAsync` calls succeeded ("applying change in-place"),
+  so the count is right and the HAL was told yes.
+- `DoIOOperation` is traced against `objectID=2` — the *device*. The stream is a parameter,
+  not the traced object, so that trace cannot tell you which stream is being serviced. Don't
+  spend time on it as I did.
+
+**The next experiment is a control, not another theory.** `mrio` is trusted against Pro Tools
+Audio Bridge on the host — which is the same shape of device, a driver-internal loopback — but
+it has never been run against a known-good loopback *inside a VM over ssh*. So the open
+question is genuinely two questions, and one command separates them: install **BlackHole** in
+the VM and point `mrio probe` at it.
+
+- BlackHole loops back → the harness is sound, and the fault is ours.
+- BlackHole is also silent → the fault is the environment, and the prime suspect is **TCC**:
+  macOS gates audio *input* behind a microphone permission, an ssh session has no way to
+  prompt, and a denial returns silence rather than an error. No TCC denial appeared in the
+  guest log, but absence of a log line is not evidence here.
+
+BlackHole is GPL-3.0 and this repo is MIT, so it stays a **black-box behavioural reference** —
+install the built bundle, observe, do not read or copy its source. See §1.
+
+### The instrumentation that produced this
+
+`-DMR_TRACE_REALTIME=ON` turns on libASPL's realtime tracing *and* the `MR_RT_LOG` lines in
+`Driver.cpp`. It is **OFF by default and must stay that way** — `syslog()` on a realtime audio
+thread is not realtime-safe. It exists because "the device appears but no audio comes back" is
+otherwise unfalsifiable: libASPL traces the property calls but not the IO callbacks, so there
+is no way to distinguish a handler that never runs from one that runs and produces silence.
+That distinction took one build to settle and is what turned this from a mystery into a
+bounded question.
+
 ## 5. Next steps, in order
 
-1. **Wait for the base image.** `tart pull ghcr.io/cirruslabs/macos-tahoe-base:latest` was
-   ~4.3 GB of ~27 GB at last check. Resume it if interrupted; tart is resumable.
-2. **Run `--control`.** Prove the harness before believing anything about our driver.
-3. **Run the real test.** If it fails, read the trace — do not start guessing.
-4. **Get the device to appear at all.** That is the whole milestone. Ignore audio quality,
-   latency and the helper daemon until a device shows up in a clean VM.
-5. **Then verify the summing numerically.** `mrio` (see the root `AGENTS.md`) writes to the
-   Sum ports and reads the buses back; the sum should be bit-exact against what was written.
+0. ~~**Unblock host networking.**~~ Cleared itself — see §6a. If a run dies at "VM never
+   became reachable", read that section and just retry before doing anything drastic.
+1. ~~**Wait for the base image.**~~ **Done 2026-08-05** — `macos-tahoe-base:latest` is pulled
+   and cached (~31 GB in `~/.tart/cache/OCIs`). If it ever needs re-pulling: ~27 GB at
+   roughly 3 MB/s from ghcr.io, so budget about two hours. It stages into `~/.tart/tmp/<hash>/`
+   and only lands in the cache when the whole pull finishes, so `cache/OCIs` reading 0 B
+   mid-pull is normal and **killing the pull throws away everything downloaded so far.**
+   Check progress with `du -sh ~/.tart/tmp/*`.
+2. ~~**Run `--control`.**~~ **Passes** (2026-08-05). Still run it first after any harness
+   change — it is cheap and it is the only thing that makes a failure interpretable.
+3. ~~**Run the real test.**~~ **Passes**, twice, on fresh VMs.
+4. ~~**Get the device to appear at all.**~~ **Done.** See §1.
+5. **Verify the summing numerically.** Half done, and the half that works is the interesting
+   half — see §4a. `./tools/vmtest.sh --verify` does this now: it cross-compiles `mrio` for
+   arm64 on the host, copies the binary into the VM (the base image has no toolchain) and
+   runs `mrio probe` against the device. **The summing is correct; the bus return is silent.**
+6. **Find out why `OnReadClientInput` is never called.** This is the front of the queue. §4a
+   has the evidence and the next experiment.
 6. **Only then the helper daemon**, which is what turns this from a pure virtual device into
    a wrapper. `src/mr_shared.h` is the driver↔helper contract and is unimplemented on the
    helper side.
@@ -163,6 +273,79 @@ category rather than managing it, and it is the right shipping vehicle for a pro
 Approval has lead time, so requesting early costs nothing.
 
 ---
+
+## 6a. When the VM is unreachable, it is the host's routing table — and it comes and goes
+
+Hit 2026-08-05 on the first run after the base image downloaded: the control **built and
+signed correctly**, the VM **booted**, and the run died at `ssh never came up`. Nothing about
+it was the driver.
+
+**Check this before believing any "the VM is broken" symptom, and check it again later —
+the condition is intermittent.** Within the same session it cleared on its own: the shadowing
+route disappeared, `192.168.64` reverted to `link#32 ... bridge102`, and the VM answered ping
+at 0.5 ms with no intervention and no sudo. It is a lease the LAN hands out, so it comes back
+when the lease renews or the machine changes network. **A failing run is worth simply
+retrying** before anything more elaborate.
+
+When it *is* present, this machine's LAN router advertises routes for the standard
+virtualisation subnets and they shadow tart's own bridge:
+
+```
+$ netstat -rn -f inet | grep 192.168.64
+192.168.64         172.16.0.1         UGSc    en0        <-- LAN router wins
+192.168.64.4       e6.8a.70.b8.2a.83  UHLWIig bridge102  <-- where the VM actually is
+
+$ route -n get 192.168.64.4
+  gateway: 172.16.0.1
+  interface: en0
+```
+
+So every packet the host sends to the VM leaves via Wi-Fi to the LAN router and is never
+seen again. `10.211.55/24`, `10.37.129/24` and `10.147.17/24` — Parallels shared, Parallels
+host-only, ZeroTier — are shadowed the same way, so this is a deliberate router
+configuration, not an accident of this project.
+
+**`tart ip` actively misleads you here.** Its default resolver reads `/var/db/dhcpd_leases`
+keyed by MAC, and *every clone of the base image carries the same MAC*
+(`e6:8a:70:b8:2a:83`), so it returns a previous VM's lease **instantly** — 0 s — for a VM
+that is still booting or unreachable. `vmtest.sh` then burns its whole 120 s ssh budget
+against a dead address and reports a timeout, which reads as a slow VM. Confirm with
+`tart ip <vm> --resolver=arp`, which answers only when the host can actually see the VM.
+
+Symptom checklist, so this is recognised rather than rediscovered: VM state `running`,
+`tart ip` returns an address immediately, ping gets 100% loss, every port is closed.
+
+### Fixes, and why the obvious ones are not available
+
+Every clean fix needs root, and there is no passwordless sudo here (§7), so **these are the
+user's to run, not yours**:
+
+```bash
+sudo route delete -net 192.168.64.0/24 172.16.0.1     # DHCP renewal may re-add it
+sudo route add -net 192.168.64.0/24 -interface bridge102
+```
+
+Or move Apple's vmnet off the shadowed subnet entirely, which survives renewal:
+
+```bash
+sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.vmnet \
+     Shared_Net_Address -string 192.168.77.1
+```
+
+`--net-softnet` does **not** help: it still uses the same vmnet bridge subnet.
+
+**`--net-bridged=en0` was tried and does not work — do not spend time on it again.** It is
+the only sudo-free candidate and it puts the VM on the physical LAN, sidestepping
+192.168.64/24 entirely, but `en0` here is **Wi-Fi** and it is the only interface tart offers
+(`tart run --net-bridged=list` → `["en0 (or \"Wi-Fi\")"]`). The VM boots and reports
+`running`, but its MAC never appears in the host's ARP table at all, which is the access
+point refusing the second MAC address bridging requires. Verified 2026-08-05 over a full
+boot: `tart ip mr-diag --resolver=arp` → `no IP address found`, `arp -an | grep e6:8a:70` →
+nothing.
+
+**So the harness is blocked on a root-level host change that only the user can make.** That
+is the current state of Phase 2 — not a driver problem, and not something more driver work
+can unblock.
 
 ## 7. Things that will waste your time if you do not know them
 

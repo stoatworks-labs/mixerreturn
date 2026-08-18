@@ -54,6 +54,13 @@ message(STATUS "MixerReturn driver factory UUID: ${DRIVER_UID}")
 add_library(${DRIVER_NAME} MODULE src/Driver.cpp)
 target_link_libraries(${DRIVER_NAME} PRIVATE libASPL)
 
+# Diagnostic only — see the comment at its use in Driver.cpp. Never ship it on.
+option(MR_TRACE_REALTIME "Trace the realtime IO callbacks (NOT realtime-safe)" OFF)
+if(MR_TRACE_REALTIME)
+    target_compile_definitions(${DRIVER_NAME} PRIVATE MR_TRACE_REALTIME=1)
+    message(WARNING "MR_TRACE_REALTIME is ON — diagnostic build, do not ship")
+endif()
+
 find_library(LIB_CoreFoundation CoreFoundation REQUIRED)
 find_library(LIB_CoreAudio CoreAudio REQUIRED)
 target_link_libraries(${DRIVER_NAME} PRIVATE ${LIB_CoreFoundation} ${LIB_CoreAudio})
@@ -76,14 +83,23 @@ set_target_properties(${DRIVER_NAME} PROPERTIES
 
 # Signing is not optional: coreaudiod will not load an unsigned HAL plugin, and says so by
 # simply not showing the device. Developer ID on this Mac, ad-hoc anywhere else.
+#
+# The resolved identity goes back into the cache with FORCE, and that is load-bearing rather
+# than tidiness: `vmtest.sh --control` reads it out of CMakeCache.txt so the control is signed
+# exactly like the driver. A plain set() here would shadow the cache, leaving CMakeCache.txt
+# saying "-" while the bundle got a Developer ID — which is how the control ended up ad-hoc
+# signed while the subject was not, i.e. differing in the one variable §2 of AGENTS.md says
+# must be held constant.
 set(MR_SIGN_IDENTITY "-" CACHE STRING "codesign identity for the driver bundle")
 if(EXISTS "$ENV{HOME}/.config/stoatworks/release-signing.env" AND MR_SIGN_IDENTITY STREQUAL "-")
     file(STRINGS "$ENV{HOME}/.config/stoatworks/release-signing.env" _mr_env
          REGEX "^RL_MAC_SIGN_IDENTITY=")
     if(_mr_env)
-        string(REGEX REPLACE "^RL_MAC_SIGN_IDENTITY=\"?([^\"]*)\"?$" "\\1" MR_SIGN_IDENTITY "${_mr_env}")
+        string(REGEX REPLACE "^RL_MAC_SIGN_IDENTITY=\"?([^\"]*)\"?$" "\\1" _mr_id "${_mr_env}")
+        set(MR_SIGN_IDENTITY "${_mr_id}" CACHE STRING "codesign identity for the driver bundle" FORCE)
     endif()
 endif()
+message(STATUS "MixerReturn driver signing identity: ${MR_SIGN_IDENTITY}")
 
 add_custom_command(TARGET ${DRIVER_NAME} POST_BUILD
     COMMAND codesign --force --sign "${MR_SIGN_IDENTITY}" --timestamp

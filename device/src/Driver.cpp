@@ -30,8 +30,21 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <vector>
+
+#ifdef MR_TRACE_REALTIME
+#include <syslog.h>
+// Diagnostic only. libASPL's realtime tracing proves the HAL is *driving* the device, but it
+// says nothing about whether OUR handlers run or what they see — which is the difference
+// between "no audio because nothing is called" and "no audio because the sum is wrong".
+// Rate-limited because these are realtime callbacks; syslog here is not realtime-safe and
+// this must never ship on.
+#define MR_RT_LOG(...) do { syslog(LOG_NOTICE, "[mixerreturn] " __VA_ARGS__); } while (0)
+#else
+#define MR_RT_LOG(...) do { } while (0)
+#endif
 
 namespace {
 
@@ -90,7 +103,12 @@ public:
         const UInt32 frames =
             std::min(bytesCount / sizeof(Float32) / SumPorts, size_t(MaxFrames));
 
-        float mix[BusChannels][MaxFrames];
+        // A member, not a local. BusChannels * MaxFrames floats is 128 KB, and this runs on
+        // a HAL realtime thread inside coreaudiod whose stack we do not own or size. A local
+        // of that size is a stack overflow waiting for the first host that asks for large
+        // blocks, and it would land as an audio-server crash rather than anything traceable
+        // back to here.
+        auto& mix = Mix;
         std::memset(mix, 0, sizeof(float) * BusChannels * frames);
 
         for (UInt32 port = 0; port < SumPorts; ++port) {
@@ -118,6 +136,18 @@ public:
             std::memcpy(gBuses.Samples[ch], mix[ch], sizeof(float) * frames);
         }
         gBuses.Frames.store(frames, std::memory_order_release);
+
+        if ((WriteCalls++ % 200) == 0) {
+            float inPeak = 0.0f, outPeak = 0.0f;
+            for (UInt32 f = 0; f < frames * SumPorts; ++f) {
+                inPeak = std::max(inPeak, std::abs(samples[f]));
+            }
+            for (UInt32 f = 0; f < frames; ++f) {
+                outPeak = std::max(outPeak, std::abs(mix[0][f]));
+            }
+            MR_RT_LOG("WriteMixedOutput #%llu bytes=%u frames=%u inPeak=%.6f bus1Peak=%.6f",
+                (unsigned long long) WriteCalls, bytesCount, frames, inPeak, outPeak);
+        }
     }
 
     // And the buses handed back as device inputs, which is what returns to the desk.
@@ -141,7 +171,68 @@ public:
                 samples[f * BusChannels + ch] = (f < have) ? gBuses.Samples[ch][f] : 0.0f;
             }
         }
+
+        if ((ReadCalls++ % 200) == 0) {
+            float peak = 0.0f;
+            for (UInt32 f = 0; f < frames * BusChannels; ++f) {
+                peak = std::max(peak, std::abs(samples[f]));
+            }
+            MR_RT_LOG("ReadClientInput #%llu bytes=%u frames=%u have=%u outPeak=%.6f",
+                (unsigned long long) ReadCalls, bytesCount, frames, have, peak);
+        }
     }
+
+#ifdef MR_TRACE_REALTIME
+    // Every other callback libASPL can issue, logged once each. The device is being driven —
+    // BeginIOOperation, EndIOOperation and GetZeroTimeStamp all tick ~289 times — yet neither
+    // handler above ever runs. Overriding the whole set answers the only question left: which
+    // operation IS the HAL asking for? If none of these fire either, the fault is upstream of
+    // the handler entirely (stream inactive, or the IO handler never installed).
+    void OnProcessClientInput(const std::shared_ptr<aspl::Client>&,
+        const std::shared_ptr<aspl::Stream>&, Float64, Float64,
+        Float32*, UInt32 frameCount, UInt32 channelCount) override
+    {
+        if (OtherCalls[0]++ == 0) {
+            MR_RT_LOG("OnProcessClientInput frames=%u chans=%u", frameCount, channelCount);
+        }
+    }
+
+    void OnProcessClientOutput(const std::shared_ptr<aspl::Client>&,
+        const std::shared_ptr<aspl::Stream>&, Float64, Float64,
+        Float32*, UInt32 frameCount, UInt32 channelCount) override
+    {
+        if (OtherCalls[1]++ == 0) {
+            MR_RT_LOG("OnProcessClientOutput frames=%u chans=%u", frameCount, channelCount);
+        }
+    }
+
+    void OnWriteClientOutput(const std::shared_ptr<aspl::Client>&,
+        const std::shared_ptr<aspl::Stream>&, Float64, Float64,
+        const Float32*, UInt32 frameCount, UInt32 channelCount) override
+    {
+        if (OtherCalls[2]++ == 0) {
+            MR_RT_LOG("OnWriteClientOutput frames=%u chans=%u", frameCount, channelCount);
+        }
+    }
+
+    void OnProcessMixedOutput(const std::shared_ptr<aspl::Stream>&, Float64, Float64,
+        Float32*, UInt32 frameCount, UInt32 channelCount) override
+    {
+        if (OtherCalls[3]++ == 0) {
+            MR_RT_LOG("OnProcessMixedOutput frames=%u chans=%u", frameCount, channelCount);
+        }
+    }
+
+    unsigned long long OtherCalls[4] {};
+#endif
+
+private:
+    unsigned long long WriteCalls = 0;
+    unsigned long long ReadCalls  = 0;
+
+    // Scratch for OnWriteMixedOutput. Only ever touched from the realtime IO thread, so no
+    // synchronisation; see the comment at its use for why it does not live on the stack.
+    float Mix[BusChannels][MaxFrames] {};
 };
 
 // Float32 interleaved, N channels. Every byte-count field is derived from the channel
@@ -176,11 +267,33 @@ std::shared_ptr<aspl::Driver> CreateDriver()
     auto context = std::make_shared<aspl::Context>(tracer);
 
     aspl::DeviceParameters params;
+#ifdef MR_TRACE_REALTIME
+    // Off by default and it must stay that way: the tracer is not realtime-safe and the IO
+    // callbacks run thousands of times a second. This exists because "the device appears but
+    // no audio comes back" is otherwise unfalsifiable — the property calls are traced, the
+    // IO calls are not, so there is no way to tell a handler that never runs from one that
+    // runs and produces silence. Build with -DMR_TRACE_REALTIME=ON to find out which.
+    params.EnableRealtimeTracing = true;
+#endif
     params.Name         = "MixerReturn";
     params.Manufacturer = "Stoatworks Labs";
     params.DeviceUID    = "com.allansargeant.mixerreturn.device";
     params.ModelUID     = "com.allansargeant.mixerreturn.model";
     params.SampleRate   = SampleRate;
+
+    // libASPL derives kAudioDevicePropertyPreferredChannelLayout from this field, and left at
+    // its default of 2 it publishes a two-channel layout (Left, Right) for a device whose
+    // streams carry eight channels each. Set for consistency. Both directions are eight wide
+    // (SumPorts outputs, BusCount*2 bus returns), so there is one right answer.
+    //
+    // **This is not what made the device load.** It was A/B'd in the VM on 2026-08-05 against
+    // a passing control, and the device appears either way — set to 8 or left at 2. The
+    // "device stopped appearing" story in AGENTS.md §4 that this was meant to explain was one
+    // more artefact of the polluted host, and has been moved to §3 with the rest of them.
+    static_assert(SumPorts == BusChannels,
+        "PreferredChannelCount can only describe both directions while they are equal");
+    params.ChannelCount = SumPorts;
+
     // Not a default-device candidate: somebody's system alerts landing in a summing bus
     // mid-show is not a failure mode worth allowing.
     params.CanBeDefault = false;
