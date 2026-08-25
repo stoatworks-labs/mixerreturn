@@ -109,7 +109,16 @@ public:
         // blocks, and it would land as an audio-server crash rather than anything traceable
         // back to here.
         auto& mix = Mix;
-        std::memset(mix, 0, sizeof(float) * BusChannels * frames);
+        // Per row, NOT one memset over the whole thing. Mix is [BusChannels][MaxFrames], so
+        // a single `memset(mix, 0, sizeof(float) * BusChannels * frames)` clears
+        // BusChannels*frames floats *contiguously from the start* — which at frames=512 and
+        // MaxFrames=4096 is row 0 and nothing else. Rows 1..7 then accumulate `+= v` across
+        // every callback forever. That shipped, and it read as: bus 1 left correct, bus 1
+        // right incoherent and climbing past 0 dBFS, buses 2..4 apparently fine only because
+        // the default crosspoint never writes to them.
+        for (UInt32 ch = 0; ch < BusChannels; ++ch) {
+            std::memset(mix[ch], 0, sizeof(float) * frames);
+        }
 
         for (UInt32 port = 0; port < SumPorts; ++port) {
             const uint32_t mask = gAssign[port].BusMask.load(std::memory_order_relaxed);

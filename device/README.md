@@ -97,5 +97,16 @@ a driver that fails to load fails silently in the device list.
 
 ## Status
 
-Early. The port model and the shared-memory contract are the parts worth reviewing first;
-the IO path is not yet wired to real hardware.
+**The device works as a summing device.** As of 2026-08-25 it loads in a clean VM, presents
+`8 in / 8 out @ 48 kHz`, and `./tools/vmtest.sh --verify` measures audio written to every Sum
+port arriving on both legs of bus 1 at the level it was sent, with buses 2..4 correctly
+silent — the shipped default crosspoint. Reproducible, no manual steps.
+
+**It is not yet a wrapper.** The helper daemon does not exist, so the device wraps no
+physical interface and passes nothing through; it presents Sum ports and bus returns only.
+The clock is free-running rather than anchored to real hardware, and none of this has been
+run in SuperRack Performer.
+
+The port model and the shared-memory contract are still the parts worth reviewing first.
+`AGENTS.md` §4a is worth reading before touching the IO path — the last two faults there
+were a macOS permission and a one-line buffer clear, neither of them where they looked.

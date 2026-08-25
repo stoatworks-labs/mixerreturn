@@ -166,8 +166,13 @@ if [[ -z "$IP" ]]; then
 fi
 note "VM at $IP"
 
+# PubkeyAuthentication=no is not decoration. The guest only takes a password, but ssh still
+# offers every key in the agent first, and a well-stocked agent exhausts the server's
+# MaxAuthTries before the password is ever tried — "Received disconnect: Too many
+# authentication failures", which reads as a broken VM. Hit on 2026-08-25.
 SSHOPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
-         -o ConnectTimeout=5)
+         -o ConnectTimeout=5 -o PubkeyAuthentication=no -o IdentitiesOnly=yes
+         -o PreferredAuthentications=password)
 ssh_vm() { sshpass -p "$VMPASS" ssh "${SSHOPTS[@]}" "$VMUSER@$IP" "$@"; }
 scp_vm() { sshpass -p "$VMPASS" scp -r "${SSHOPTS[@]}" "$@"; }
 
@@ -224,6 +229,43 @@ if ssh_vm "system_profiler SPAudioDataType 2>/dev/null | grep -qi '$EXPECT'"; th
     note "copying mrio in"
     scp_vm "$MRIO" "$VMUSER@$IP:/tmp/mrio"
     ssh_vm "chmod +x /tmp/mrio"
+
+    # ---------------------------------------------------------------------------------
+    # Grant the microphone TCC consent, WITHOUT which every measurement below is a lie.
+    #
+    # macOS gates audio *input* behind kTCCServiceMicrophone. An ssh session has no window
+    # station to prompt in, so tccd does not ask, it denies:
+    #
+    #   Policy disallows prompt for Sub:{/usr/libexec/sshd-keygen-wrapper};
+    #   access to kTCCServiceMicrophone denied
+    #
+    # A denial does not error. coreaudiod simply zero-fills the client's input buffers and
+    # never asks the driver to fill them, so the driver's OnReadClientInput is never called
+    # and mrio captures perfect digital silence. That reads exactly like a broken return
+    # path, and it cost this project a long investigation into a driver that was fine.
+    #
+    # Proven, not assumed: with this grant absent, BlackHole — a known-good driver-internal
+    # loopback with none of our code in it — probes as an entirely empty matrix too. With
+    # the grant in place it probes as a clean 1:1 loopback. See AGENTS.md §4a.
+    #
+    # This is only tolerable because the guest is a throwaway VM whose base image ships with
+    # SIP disabled, which is what makes TCC.db writable at all. Never do this to a real
+    # machine.
+    # It must be the PATH form, client_type=1. A/B'd four ways on 2026-08-25:
+    #
+    #   client='com.apple.sshd-keygen-wrapper', client_type=0  -> STILL SILENT
+    #   client='/usr/libexec/sshd-keygen-wrapper', client_type=1 -> WORKS, on its own
+    #
+    # The bundle-identifier form is what most TCC examples use and what this script tried
+    # first; it does nothing here, with or without a coreaudiod restart, and it fails exactly
+    # like no grant at all. Restarting tccd is enough — coreaudiod does not need bouncing.
+    # A row for the accessor itself (/private/tmp/mrio) is not needed: TCC attributes to the
+    # RESPONSIBLE process, which is sshd, not to the binary doing the asking.
+    note "granting kTCCServiceMicrophone in the guest (ssh cannot prompt; a denial is silent)"
+    ssh_vm "sqlite3 \"\$HOME/Library/Application Support/com.apple.TCC/TCC.db\" \
+      \"INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,indirect_object_identifier,flags) VALUES ('kTCCServiceMicrophone','/usr/libexec/sshd-keygen-wrapper',1,2,4,1,'UNUSED',0);\" " \
+      || note "TCC grant failed — input measurements below will read as silence"
+    ssh_vm "echo '$VMPASS' | sudo -S killall tccd 2>/dev/null; sleep 3" || true
 
     note "devices mrio sees in the guest"
     ssh_vm "/tmp/mrio list 2>&1" || true

@@ -14,11 +14,15 @@ method and traps.
 **The driver loads. `MixerReturn` appears in the device list.** Reached 2026-08-05, in a
 clean VM, behind a passing control — the milestone §5 called "the whole milestone".
 
-Scope that claim carefully. coreaudiod accepts the bundle, publishes the device, and drives
-it: audio written to the Sum ports reaches the driver and **is summed correctly** (§4a). What
-does *not* work is the return leg — the HAL never asks the driver to fill the input buffers,
-so the buses come back as digital silence. The helper daemon does not exist, and nothing has
-been tested in a real host application.
+**The return leg works too, as of 2026-08-25.** `mrio probe` in a clean VM measures every
+Sum port arriving on bus 1 at the level it was sent, both legs, with buses 2..4 correctly
+silent — the shipped default crosspoint, exactly as `vmtest.sh` predicts it. Audio goes in
+the Sum ports and comes back out the bus returns. See §4a for how, and for the two separate
+faults that were sitting on top of each other.
+
+Scope it: the device sums, and the round trip is numerically right. The helper daemon still
+does not exist, so it wraps no physical interface, and nothing has been tested in a real host
+application.
 
 Evidence — every run on a freshly cloned VM, all on 2026-08-05:
 
@@ -175,51 +179,99 @@ expect faster progress now.
 
 ---
 
-## 4a. The summing works. The bus return is never asked for.
+## 4a. RESOLVED: two faults stacked, and neither was where it looked
 
-Measured 2026-08-05 with `./tools/vmtest.sh --verify`. `mrio probe` reports an **entirely
-empty** crosspoint matrix — every bus return at −240 dBFS, which is not "quiet", it is exact
-digital zero. But the driver is not idle, and the two instrumented log lines below are the
-whole finding:
+Closed 2026-08-25. The symptom was "the summing is correct but the bus return is digital
+silence, and `OnReadClientInput` is never called". That was **two independent faults**, and
+the first one made the second invisible.
+
+### Fault 1 — TCC denied the microphone, so the measurement was a lie
+
+macOS gates audio *input* behind `kTCCServiceMicrophone`. An ssh session has no window
+station to prompt in, so tccd does not ask — it denies, and the denial is in the guest log
+verbatim:
 
 ```
-[mixerreturn] WriteMixedOutput #1 bytes=16384 frames=512 inPeak=0.200000 bus1Peak=1.551093
-[mixerreturn] OnProcessMixedOutput frames=512 chans=8
+tccd: Policy disallows prompt for Sub:{/usr/libexec/sshd-keygen-wrapper}
+      ...; access to kTCCServiceMicrophone denied
 ```
 
-`inPeak=0.2` is exactly mrio's `--amp 0.2` test tone arriving on the Sum ports, and
-`bus1Peak=1.55` is eight of them summed. **The output path and the summing arithmetic are
-correct.** `OnReadClientInput`, meanwhile, logs **zero** times — the HAL never asks the driver
-to fill the input buffers, so mrio captures 96000 frames of zeroes that the HAL zero-filled
-itself.
+with attribution naming `accessing=mrio`, `requesting=coreaudiod`, `responsible=sshd`. A
+denial does not error: coreaudiod zero-fills the client's input buffers and **never asks the
+driver to fill them**, which is why `OnReadClientInput` logged zero calls. The driver was
+never in the loop at all.
 
-Established, so it need not be re-derived:
+The previous version of this section said "no TCC denial appeared in the guest log". It was
+always there. That search almost certainly hit the zsh `log`-builtin trap documented in the
+FAIL branch of `vmtest.sh` — spell it `/usr/bin/log`.
 
-- Both streams exist: objectID 3 = output, objectID 6 = input, each with its volume and mute
-  control. `mrio list` in the guest agrees — `MixerReturn  8 in / 8 out @ 48000`.
-- The IO cycle genuinely runs: ~289 `BeginIOOperation`/`EndIOOperation` pairs,
-  `GetZeroTimeStamp` ticking, `StartIO` twice.
-- libASPL's `WillDoIOOperationImpl` advertises `ReadInput` whenever `numInputStreams_ > 0`,
-  and the trace confirms both `AddStreamAsync` calls succeeded ("applying change in-place"),
-  so the count is right and the HAL was told yes.
-- `DoIOOperation` is traced against `objectID=2` — the *device*. The stream is a parameter,
-  not the traced object, so that trace cannot tell you which stream is being serviced. Don't
-  spend time on it as I did.
+**The control settled it in one command, exactly as this section predicted it would.**
+BlackHole — a known-good driver-internal loopback with none of our code in it — probed as an
+**entirely empty matrix** in the same VM, over the same ssh session, with the same mrio
+binary. Granting the TCC consent turned it into a clean 1:1 loopback at -14.0 dBFS. Nothing
+about the driver changed between those two runs.
 
-**The next experiment is a control, not another theory.** `mrio` is trusted against Pro Tools
-Audio Bridge on the host — which is the same shape of device, a driver-internal loopback — but
-it has never been run against a known-good loopback *inside a VM over ssh*. So the open
-question is genuinely two questions, and one command separates them: install **BlackHole** in
-the VM and point `mrio probe` at it.
+`vmtest.sh --verify` now inserts that grant itself. It is only tolerable because the base
+image ships with **SIP disabled**, which is what makes `TCC.db` writable. Never on a real
+machine.
 
-- BlackHole loops back → the harness is sound, and the fault is ours.
-- BlackHole is also silent → the fault is the environment, and the prime suspect is **TCC**:
-  macOS gates audio *input* behind a microphone permission, an ssh session has no way to
-  prompt, and a denial returns silence rather than an error. No TCC denial appeared in the
-  guest log, but absence of a log line is not evidence here.
+**The grant must be the PATH form, and this wasted a run.** A/B'd four ways:
 
-BlackHole is GPL-3.0 and this repo is MIT, so it stays a **black-box behavioural reference** —
-install the built bundle, observe, do not read or copy its source. See §1.
+| row | result |
+|---|---|
+| `com.apple.sshd-keygen-wrapper`, `client_type=0` | **still silent** — as if no grant existed |
+| same, plus a `killall coreaudiod` | still silent |
+| `/usr/libexec/sshd-keygen-wrapper`, `client_type=1` | **works, on its own** |
+| plus a row for `/private/tmp/mrio` | no additional effect |
+
+The bundle-identifier form is what most TCC examples show, and it fails here
+indistinguishably from no grant at all. Restarting `tccd` is sufficient; `coreaudiod` does
+not need bouncing. And no row is needed for the accessor binary itself — TCC attributes to
+the **responsible** process, which is sshd, not to whatever is doing the asking.
+
+### Fault 2 — `Mix` was only ever cleared one row deep
+
+With the harness telling the truth, the real bug appeared immediately, and the matrix named
+it precisely: bus 1 **left** correct at -14.0, bus 1 **right** incoherent and climbing past
+**0 dBFS**, buses 2..4 apparently fine.
+
+`Mix` is `[BusChannels][MaxFrames]` — 8 rows of 4096. The clear was one memset over the whole
+array sized `BusChannels * frames`:
+
+```c
+std::memset(mix, 0, sizeof(float) * BusChannels * frames);   // WRONG
+```
+
+At `frames = 512` that is `8 * 512 = 4096` floats cleared **contiguously from the start**,
+which is row 0 and nothing else. Rows 1..7 were never zeroed and accumulated `+= v` on every
+callback, forever. It is now a per-row loop.
+
+Three observations, one cause, and this is why it survived so long:
+
+- **in 1** (row 0) — cleared every cycle, always correct
+- **in 2** (row 1) — never cleared, unbounded accumulation, hence the >0 dBFS overshoot
+- **in 3..8** (rows 2..7) — never cleared *but never written either*, because the default
+  crosspoint only ever targets bus 1, so they read as clean silence
+
+And the reason the old instrumentation called this healthy: `WriteMixedOutput`'s
+`bus1Peak` only ever peaks `mix[0]` — the one row that was right. `bus1Peak=1.551093` was
+reported by both the broken and the fixed build.
+
+### Evidence, 2026-08-25, one VM, one ssh session
+
+| run | subject | result |
+|---|---|---|
+| control | libASPL `SinewaveDevice` | PASS — appears |
+| 1 | MixerReturn, no TCC grant | empty matrix — every cell < -80 dBFS |
+| 2 | **BlackHole**, no TCC grant | **empty matrix too** — fault is the environment |
+| 3 | BlackHole, TCC granted | clean 1:1 loopback, -14.0 dBFS |
+| 4 | MixerReturn, TCC granted | in 1 correct; **in 2 scrambled, +0.8 dBFS** |
+| 5 | MixerReturn, `Mix` clear fixed | in 1 + in 2 both -14.0 across all 8 ports; in 3..8 silent |
+| 6 | repeat of 5 | identical |
+
+Run 2 is the one that mattered. Runs 1 and 2 are indistinguishable from outside, and without
+run 2 the obvious reading of run 1 is "our driver's input path is broken" — which would have
+sent the work straight into the one part of the code that had nothing wrong with it.
 
 ### The instrumentation that produced this
 
@@ -233,27 +285,25 @@ bounded question.
 
 ## 5. Next steps, in order
 
-0. ~~**Unblock host networking.**~~ Cleared itself — see §6a. If a run dies at "VM never
-   became reachable", read that section and just retry before doing anything drastic.
-1. ~~**Wait for the base image.**~~ **Done 2026-08-05** — `macos-tahoe-base:latest` is pulled
-   and cached (~31 GB in `~/.tart/cache/OCIs`). If it ever needs re-pulling: ~27 GB at
-   roughly 3 MB/s from ghcr.io, so budget about two hours. It stages into `~/.tart/tmp/<hash>/`
-   and only lands in the cache when the whole pull finishes, so `cache/OCIs` reading 0 B
-   mid-pull is normal and **killing the pull throws away everything downloaded so far.**
-   Check progress with `du -sh ~/.tart/tmp/*`.
-2. ~~**Run `--control`.**~~ **Passes** (2026-08-05). Still run it first after any harness
-   change — it is cheap and it is the only thing that makes a failure interpretable.
-3. ~~**Run the real test.**~~ **Passes**, twice, on fresh VMs.
-4. ~~**Get the device to appear at all.**~~ **Done.** See §1.
-5. **Verify the summing numerically.** Half done, and the half that works is the interesting
-   half — see §4a. `./tools/vmtest.sh --verify` does this now: it cross-compiles `mrio` for
-   arm64 on the host, copies the binary into the VM (the base image has no toolchain) and
-   runs `mrio probe` against the device. **The summing is correct; the bus return is silent.**
-6. **Find out why `OnReadClientInput` is never called.** This is the front of the queue. §4a
-   has the evidence and the next experiment.
-6. **Only then the helper daemon**, which is what turns this from a pure virtual device into
-   a wrapper. `src/mr_shared.h` is the driver↔helper contract and is unimplemented on the
-   helper side.
+Steps 0-4 are done and their detail has been folded into §1, §4 and §6a. What remains:
+
+5. ~~**Verify the summing numerically.**~~ **Done 2026-08-25.** `./tools/vmtest.sh --verify`
+   measures every Sum port on both legs of bus 1 at the level it was sent, buses 2..4
+   silent, reproducibly, on a fresh VM with no manual steps.
+6. ~~**Find out why `OnReadClientInput` is never called.**~~ **Done 2026-08-25** — TCC, not
+   the driver. See §4a. It fires normally now.
+7. **The helper daemon.** Now the front of the queue, and the thing that turns this from a
+   pure virtual device into a *wrapper*. `src/mr_shared.h` is the driver-to-helper contract
+   and is unimplemented on the helper side. Until it exists the device presents Sum ports
+   and bus returns only — it wraps no hardware, so the passthrough half of the product
+   does not exist.
+8. **Anchor the timeline to the wrapped device's clock.** `README.md` calls this the hard
+   part of the project, and nothing measured so far has tested it: the current device is
+   free-running, so `GetZeroTimeStamp` has had no real hardware to track.
+9. **Run it in SuperRack Performer**, which is the actual target host and has never seen
+   this device. Everything to date is `mrio` in a VM.
+
+Only step 7 is really scoped. Steps 8 and 9 are named so they are not mistaken for done.
 
 ### Deliberately deferred
 
