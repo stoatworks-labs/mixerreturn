@@ -292,11 +292,13 @@ Steps 0-4 are done and their detail has been folded into §1, §4 and §6a. What
    silent, reproducibly, on a fresh VM with no manual steps.
 6. ~~**Find out why `OnReadClientInput` is never called.**~~ **Done 2026-08-25** — TCC, not
    the driver. See §4a. It fires normally now.
-7. **The helper daemon.** Now the front of the queue, and the thing that turns this from a
-   pure virtual device into a *wrapper*. `src/mr_shared.h` is the driver-to-helper contract
-   and is unimplemented on the helper side. Until it exists the device presents Sum ports
-   and bus returns only — it wraps no hardware, so the passthrough half of the product
-   does not exist.
+7. ~~**The helper daemon.**~~ **Written 2026-08-25** — see §5a. It opens hardware, runs an
+   IOProc, publishes the clock and survives a coreaudiod restart. The rings are not yet
+   connected to anything at the driver end.
+7a. **Wire the driver to the region.** Now the front of the queue: read `captureRing`, write
+   `playbackRing`, and mirror `numInputs`/`numOutputs` into the device's streams so the
+   wrapper presents the hardware's real shape instead of a fixed 8/4. This is the step that
+   first puts audio through the shared region in both directions.
 8. **Anchor the timeline to the wrapped device's clock.** `README.md` calls this the hard
    part of the project, and nothing measured so far has tested it: the current device is
    free-running, so `GetZeroTimeStamp` has had no real hardware to track.
@@ -310,6 +312,90 @@ Only step 7 is really scoped. Steps 8 and 9 are named so they are not mistaken f
 - **The helper daemon and physical passthrough.** The device currently presents Sum ports and
   bus returns only. Wrapping a real interface needs the helper; nothing about it is written.
 - **Windows.** A WDM driver, an entirely separate project. See root `AGENTS.md` §7.
+
+---
+
+## 5a. The helper daemon: what is built and what is proven
+
+Started 2026-08-25. `helper/mixerreturnd.cpp`, built as `mixerreturnd`.
+
+### SETTLED FIRST: POSIX shm IS reachable from inside the driver sandbox
+
+Everything in `src/mr_shared.h` rests on one assumption — that the driver, inside
+coreaudiod's sandboxed `Core-Audio-Driver-Service.helper`, can map a region an ordinary
+user-space process created. The bundle declares `sandboxSafe=true` and an **empty**
+`AudioServerPlugIn_MachServices` array, and a sandboxed process is not generally allowed to
+`shm_open` an arbitrary name, so this was a real risk to the whole design.
+
+**Answered before the daemon was written, not after** — §2's lesson applied to the next
+unknown. `-DMR_SHM_PROBE=ON` builds `tools/mrshmprobe.c` (creates the region, stamps a magic
+value, ticks a counter) plus a retrying probe thread in the driver. Result in a clean VM:
+
+```
+SHMPROBE attached: magic=0x4D52534D (expected 0x4D52534D)
+SHMPROBE VERDICT: LIVE — counter 2 -> 5. POSIX shm works from inside the sandbox
+```
+
+A *changing* counter, not just a matching magic — a stale mapping or the driver's own empty
+region would both pass a magic check alone. No sandbox denial for our name anywhere in the
+log. The probe is kept, compiled out by default: if anyone ever changes `sandboxSafe` or the
+MachServices array, this is the control that says whether the design still holds.
+
+### What the daemon does
+
+Opens a real device by UID or name, runs its IOProc, and moves hardware input into
+`captureRing` and `playbackRing` into hardware output. Buffer layouts are walked rather than
+assumed — an interface may present one interleaved buffer or many mono ones, and both are
+normal.
+
+**It publishes the hardware's clock every cycle**, which is the reason it exists as far as
+the driver is concerned. Verified: `sample 198272 -> 246400`, **+48128 frames in one second**
+against a 48 kHz device.
+
+`--list` enumerates, `--dump` attaches read-only and reports. `--dump` samples twice a second
+apart deliberately: a populated region with a frozen anchor reads identically to a healthy
+one in a single sample, and it is the counters that MOVE that mean anything.
+
+### FIXED: a coreaudiod restart left it a zombie
+
+First run in a VM: `killall coreaudiod` left the helper reporting `RUNNING` with a **frozen
+anchor**. The IOProc is never called again, no error is delivered, and nothing notices. That
+is exactly the failure `helperState` was added to prevent, and it is not an edge case —
+every driver install restarts coreaudiod.
+
+There is now a watchdog on the control thread: two seconds of an unmoving `anchorSampleTime`
+triggers re-resolution **by UID** (coreaudiod hands out fresh AudioDeviceIDs across a
+restart, so the old ID refers to nothing) and a restart of the IOProc. Ring pointers are
+deliberately **not** reset — they are monotonic, so a reader that survived the outage simply
+continues, where a reset would hand it a discontinuity it cannot interpret.
+
+The watchdog keys on the frozen clock rather than on
+`kAudioHardwarePropertyServiceRestarted`. That notification covers one cause; a frozen clock
+is the symptom that matters and also covers device loss, the IOProc being stopped
+underneath us, and anything else with the same effect.
+
+Verified both directions, 2026-08-25:
+
+| event | result |
+|---|---|
+| `killall coreaudiod` | clock kept advancing — the bounce does not always stall it |
+| wrapped device removed | watchdog fires, recovery attempted, state honestly **FAILED** |
+| device restored | **recovers to RUNNING unaided**, clock advancing again |
+
+The middle row is the one worth keeping: it reports FAILED rather than a zombie RUNNING,
+which is the whole point.
+
+### Not yet true
+
+- **The driver side is not wired.** Nothing reads `captureRing` or writes `playbackRing`,
+  so a standalone helper pegs `capture.write` at `MR_RING_FRAMES` and counts overruns and
+  underruns forever. That is correct standalone behaviour, not a fault — but it means the
+  rings have never actually carried audio between the two processes.
+- The device still presents a fixed 8 Sum ports / 4 buses rather than mirroring the
+  hardware's real channel counts out of the region.
+- `MR_MAX_CHANNELS` is 64 and the helper refuses anything wider. Worth knowing: the L-ISA
+  Audio Bridge on the working machine is **112 channels**, so that ceiling is not
+  theoretical.
 
 ---
 
@@ -429,10 +515,18 @@ device/
   CMakeLists.txt       fetches libASPL, builds+signs the bundle, generates the factory UUID
   Info.plist.in        from libASPL's template; note sandboxSafe and the MachServices key
   src/Driver.cpp       the driver — Sum ports, crosspoint, bus returns
-  src/mr_shared.h      driver <-> helper contract for the future wrapper (helper unwritten)
+  src/mr_shared.h      driver <-> helper contract; dual-language, see the MR_ATOMIC note
+  helper/mixerreturnd.cpp  the helper daemon — owns the hardware, publishes the clock (§5a)
   tools/vmtest.sh      the test rig; --control first, always
   tools/mrprobe.c      in-process loader; useful, not authoritative (see §3)
+  tools/mrshmprobe.c   the sandbox-reachability control; -DMR_SHM_PROBE=ON (§5a)
 ```
+
+`src/mr_shared.h` is spelled with an `MR_ATOMIC(T)` macro rather than `_Atomic T` because
+both consumers are C++ and libc++ refuses `<atomic>` alongside `<stdatomic.h>` before C++23 —
+anything including CoreAudio or libASPL pulls in `<atomic>`, so the C spelling could not be
+included by either side. C++ callers write `std::memory_order_*`; the `atomic_*_explicit`
+functions are found by ADL, so both languages use the same call spelling.
 
 The control surface lives at `../client/web-ui`, running against a simulated device behind a
 `Device` seam in `app.js`. Wiring it to a real backend replaces that seam and puts out the

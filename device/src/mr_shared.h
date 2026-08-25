@@ -15,7 +15,24 @@
 #define MR_SHARED_H
 
 #include <stdint.h>
-#include <stdatomic.h>
+
+/*  Both consumers are C++ — the driver is C++ on libASPL, the helper is C++ on CoreAudio —
+ *  but this header describes a C ABI and was written with <stdatomic.h>. libc++ refuses to
+ *  see <atomic> and <stdatomic.h> in the same translation unit before C++23 ("<atomic> is
+ *  incompatible with <stdatomic.h>"), and anything including CoreAudio or libASPL pulls in
+ *  <atomic>. So the atomics are spelled through one macro that resolves to whichever the
+ *  language provides. std::atomic<T> and _Atomic T are layout-compatible here, which is what
+ *  keeps this a shared-memory contract rather than two structs that merely look alike.
+ *
+ *  C++ callers write std::memory_order_*; the atomic_*_explicit functions are found by ADL
+ *  on the std::atomic argument, so both languages use the same call spelling. */
+#ifdef __cplusplus
+  #include <atomic>
+  #define MR_ATOMIC(T) std::atomic<T>
+#else
+  #include <stdatomic.h>
+  #define MR_ATOMIC(T) _Atomic T
+#endif
 
 #define MR_SHM_NAME      "/mixerreturn.shm"
 #define MR_SHM_VERSION   1
@@ -34,16 +51,16 @@
  *  is genuinely many-to-many — a Sum port may feed several buses at once, which is how one
  *  automixed channel lands in both a main return and a separate record feed. */
 typedef struct {
-    _Atomic uint32_t busMask;    /* bit b set = this Sum port feeds bus b                 */
-    _Atomic float    gain;       /* linear, applied on the way into the sum               */
+    MR_ATOMIC(uint32_t) busMask;    /* bit b set = this Sum port feeds bus b                 */
+    MR_ATOMIC(float)   gain;     /* linear, applied on the way into the sum               */
 } MRSumAssign;
 
 /*  Where a bus comes out. The pair is expressed as physical output channel indices so the
  *  helper does not have to know anything about stereo pairing rules. -1 = not landed. */
 typedef struct {
-    _Atomic int32_t  outLeft;
-    _Atomic int32_t  outRight;
-    _Atomic float    gain;
+    MR_ATOMIC(int32_t) outLeft;
+    MR_ATOMIC(int32_t) outRight;
+    MR_ATOMIC(float)   gain;
 } MRBusOutput;
 
 /*  One producer, one consumer, per channel. `write` is only ever advanced by the producer
@@ -55,8 +72,8 @@ typedef struct {
  *  order the host hands them over, and interleaving would force it to buffer a whole cycle
  *  before it could write anything. */
 typedef struct {
-    _Atomic uint64_t write;
-    _Atomic uint64_t read;
+    MR_ATOMIC(uint64_t) write;
+    MR_ATOMIC(uint64_t) read;
     float            data[MR_RING_FRAMES];
 } MRRing;
 
@@ -72,23 +89,23 @@ typedef enum {
 
 typedef struct {
     uint32_t          version;          /* MR_SHM_VERSION; mismatch means do not touch    */
-    _Atomic uint32_t  helperState;      /* MRHelperState                                  */
+    MR_ATOMIC(uint32_t) helperState;      /* MRHelperState                                  */
 
     /*  What the helper found when it opened the hardware. The driver mirrors these into
      *  its own stream formats, which is what makes this a wrapper rather than a fixed
      *  virtual device. */
-    _Atomic uint32_t  numInputs;
-    _Atomic uint32_t  numOutputs;
-    _Atomic uint32_t  numSums;
-    _Atomic double    sampleRate;
+    MR_ATOMIC(uint32_t) numInputs;
+    MR_ATOMIC(uint32_t) numOutputs;
+    MR_ATOMIC(uint32_t) numSums;
+    MR_ATOMIC(double)   sampleRate;
 
     /*  The hardware's clock, published by the helper's IOProc every cycle. The driver
      *  anchors GetZeroTimeStamp to this so the virtual device runs on the hardware's
      *  timeline rather than a free-running one of its own — two clocks would drift and
      *  the wrapper would slowly slip against the interface it is wrapping. */
-    _Atomic uint64_t  anchorHostTime;   /* mach_absolute_time at the sample below         */
-    _Atomic uint64_t  anchorSampleTime;
-    _Atomic uint32_t  cycleFrames;      /* the hardware's buffer size                     */
+    MR_ATOMIC(uint64_t) anchorHostTime;   /* mach_absolute_time at the sample below         */
+    MR_ATOMIC(uint64_t) anchorSampleTime;
+    MR_ATOMIC(uint32_t) cycleFrames;      /* the hardware's buffer size                     */
 
     MRSumAssign       sums[MR_MAX_SUMS];
     MRBusOutput       buses[MR_MAX_BUSES];
@@ -102,8 +119,8 @@ typedef struct {
 
     /*  Diagnostics. Counters rather than logs: an audio thread cannot log, and a dropout
      *  that leaves no trace is one nobody can argue about after the show. */
-    _Atomic uint64_t  captureOverruns;
-    _Atomic uint64_t  playbackUnderruns;
+    MR_ATOMIC(uint64_t) captureOverruns;
+    MR_ATOMIC(uint64_t) playbackUnderruns;
 } MRShared;
 
 #endif /* MR_SHARED_H */

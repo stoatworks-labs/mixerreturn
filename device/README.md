@@ -102,10 +102,17 @@ a driver that fails to load fails silently in the device list.
 port arriving on both legs of bus 1 at the level it was sent, with buses 2..4 correctly
 silent — the shipped default crosspoint. Reproducible, no manual steps.
 
-**It is not yet a wrapper.** The helper daemon does not exist, so the device wraps no
-physical interface and passes nothing through; it presents Sum ports and bus returns only.
-The clock is free-running rather than anchored to real hardware, and none of this has been
-run in SuperRack Performer.
+**The helper daemon exists as of 2026-08-25** (`helper/mixerreturnd.cpp`). It opens a real
+device, runs its IOProc, moves hardware I/O in and out of the shared rings, publishes the
+hardware's clock every cycle — measured at +48128 frames per second against a 48 kHz device —
+and recovers on its own when coreaudiod restarts or the interface disappears. It was also
+settled first, with a control, that POSIX shared memory really is reachable from inside the
+driver's sandbox; see `AGENTS.md` §5a.
+
+**It is still not a wrapper end to end.** The driver side is not wired to the region: nothing
+reads `captureRing` or writes `playbackRing`, so no audio has yet crossed between the two
+processes, the device still presents a fixed 8 Sum ports / 4 buses instead of mirroring the
+hardware's real channel counts, and none of this has been run in SuperRack Performer.
 
 The port model and the shared-memory contract are still the parts worth reviewing first.
 `AGENTS.md` §4a is worth reading before touching the IO path — the last two faults there

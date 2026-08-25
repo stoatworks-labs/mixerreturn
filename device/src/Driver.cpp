@@ -34,6 +34,17 @@
 #include <cstring>
 #include <vector>
 
+#ifdef MR_SHM_PROBE
+// The shared-memory reachability control. See tools/mrshmprobe.c for why this exists and
+// what it is asking. Compiled out entirely unless -DMR_SHM_PROBE=ON.
+#include <cerrno>
+#include <fcntl.h>
+#include <pthread.h>
+#include <sys/mman.h>
+#include <syslog.h>
+#include <unistd.h>
+#endif
+
 #ifdef MR_TRACE_REALTIME
 #include <syslog.h>
 // Diagnostic only. libASPL's realtime tracing proves the HAL is *driving* the device, but it
@@ -88,6 +99,109 @@ struct BusBuffer
 };
 
 BusBuffer gBuses;
+
+#ifdef MR_SHM_PROBE
+
+// ---------------------------------------------------------------------------------------
+// Can this driver, inside coreaudiod's sandbox, map memory a user-space process created?
+//
+// Everything in src/mr_shared.h assumes yes: one POSIX region at /mixerreturn.shm, mapped
+// by both sides. The bundle declares sandboxSafe=true and an EMPTY
+// AudioServerPlugIn_MachServices array, and a sandboxed process is not generally allowed to
+// shm_open an arbitrary name — so "yes" is an assumption, not a fact, and the entire helper
+// daemon is built on it.
+//
+// Retried on a thread rather than attempted once at creation, because the ordering is not
+// ours to choose: the driver is constructed when coreaudiod loads it, which may be long
+// before the helper exists. A single failed attempt would report "sandbox denied" for what
+// was really "not created yet" — the same class of unsound test that §3 is a list of.
+// ---------------------------------------------------------------------------------------
+
+constexpr const char* ProbeShmName = "/mixerreturn.shm";
+constexpr uint32_t    ProbeMagic   = 0x4D52534Du;  // 'MRSM'
+
+struct ProbeRegion
+{
+    uint32_t magic;
+    uint32_t counter;
+};
+
+void* ShmProbeThread(void*)
+{
+    syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE thread up, attempting %s", ProbeShmName);
+
+    for (int attempt = 0; attempt < 120; ++attempt) {
+        const int fd = shm_open(ProbeShmName, O_RDWR, 0666);
+        if (fd < 0) {
+            // errno is the whole result here. EPERM/EACCES = the sandbox refused, which
+            // kills the POSIX design. ENOENT = simply not created yet, so keep waiting.
+            if (attempt == 0 || errno != ENOENT) {
+                syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE shm_open failed errno=%d (%s)",
+                    errno, strerror(errno));
+            }
+            if (errno != ENOENT) {
+                syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE VERDICT: DENIED — "
+                    "POSIX shm is not reachable from inside the driver sandbox");
+                return nullptr;
+            }
+            sleep(1);
+            continue;
+        }
+
+        void* p = mmap(nullptr, sizeof(ProbeRegion), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (p == MAP_FAILED) {
+            syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE mmap failed errno=%d (%s)",
+                errno, strerror(errno));
+            syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE VERDICT: DENIED at mmap");
+            close(fd);
+            return nullptr;
+        }
+
+        auto* r = static_cast<ProbeRegion*>(p);
+        syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE attached: magic=0x%08X (expected 0x%08X)",
+            r->magic, ProbeMagic);
+
+        if (r->magic != ProbeMagic) {
+            // Mapped something, but not the creator's region — most likely our own empty
+            // one, which would mean the namespaces are separate and the two sides can never
+            // meet. Distinguishing this from success is the reason for the magic value.
+            syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE VERDICT: WRONG REGION — "
+                "mapped a region but not the creator's; namespaces are not shared");
+            close(fd);
+            return nullptr;
+        }
+
+        // Watch the counter move. A matching magic could still be a stale or copy-on-write
+        // snapshot; only a value that CHANGES proves this is live shared memory.
+        const uint32_t first = r->counter;
+        sleep(3);
+        const uint32_t second = r->counter;
+
+        if (second != first) {
+            syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE VERDICT: LIVE — counter %u -> %u. "
+                "POSIX shm works from inside the sandbox; mr_shared.h's design stands.",
+                first, second);
+        } else {
+            syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE VERDICT: STATIC — counter stuck at %u. "
+                "Mapped, but not observing the creator's writes.", first);
+        }
+        close(fd);
+        return nullptr;
+    }
+
+    syslog(LOG_NOTICE, "[mixerreturn] SHMPROBE VERDICT: TIMEOUT — region never appeared. "
+        "Was mrshmprobe running?");
+    return nullptr;
+}
+
+void StartShmProbe()
+{
+    pthread_t t;
+    pthread_create(&t, nullptr, ShmProbeThread, nullptr);
+    pthread_detach(t);
+}
+
+#endif // MR_SHM_PROBE
 
 class MixerReturnHandler : public aspl::IORequestHandler
 {
@@ -327,6 +441,10 @@ std::shared_ptr<aspl::Driver> CreateDriver()
     device->AddStreamWithControlsAsync(returns);
 
     device->SetIOHandler(std::make_shared<MixerReturnHandler>());
+
+#ifdef MR_SHM_PROBE
+    StartShmProbe();
+#endif
 
     auto plugin = std::make_shared<aspl::Plugin>(context);
     plugin->AddDevice(device);

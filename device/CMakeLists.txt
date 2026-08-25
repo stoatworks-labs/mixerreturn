@@ -61,9 +61,32 @@ if(MR_TRACE_REALTIME)
     message(WARNING "MR_TRACE_REALTIME is ON — diagnostic build, do not ship")
 endif()
 
+# The shared-memory reachability control. Answers whether the driver, inside coreaudiod's
+# sandbox, can map a region a user-space process created — the assumption the whole helper
+# daemon in src/mr_shared.h rests on. Diagnostic; never ship it on.
+option(MR_SHM_PROBE "Probe whether POSIX shm is reachable from inside the driver sandbox" OFF)
+if(MR_SHM_PROBE)
+    target_compile_definitions(${DRIVER_NAME} PRIVATE MR_SHM_PROBE=1)
+    # project() declares CXX only, and the creator is C.
+    enable_language(C)
+    add_executable(mrshmprobe tools/mrshmprobe.c)
+    message(WARNING "MR_SHM_PROBE is ON — diagnostic build, do not ship")
+endif()
+
 find_library(LIB_CoreFoundation CoreFoundation REQUIRED)
 find_library(LIB_CoreAudio CoreAudio REQUIRED)
 target_link_libraries(${DRIVER_NAME} PRIVATE ${LIB_CoreFoundation} ${LIB_CoreAudio})
+
+# ---------------------------------------------------------------------------------------
+# mixerreturnd — the helper daemon. Not part of the driver bundle and deliberately a
+# separate binary: an AudioServerPlugIn runs inside coreaudiod and cannot open a CoreAudio
+# device, which is the entire reason this process exists.
+# ---------------------------------------------------------------------------------------
+add_executable(mixerreturnd helper/mixerreturnd.cpp)
+target_link_libraries(mixerreturnd PRIVATE ${LIB_CoreFoundation} ${LIB_CoreAudio})
+set_target_properties(mixerreturnd PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON)
 
 # PREFIX/SUFFIX cleared because a MODULE library is otherwise "libMixerReturn.so", and the
 # executable name has to match CFBundleExecutable. MACOSX_BUNDLE *and* BUNDLE are both
