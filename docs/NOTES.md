@@ -43,11 +43,25 @@ with no automixer involved. It does **NOT** serve SuperRack SoundGrid — I clai
 wrong; SoundGrid takes its I/O from SoundGrid hardware, not CoreAudio or ASIO. See
 [superrack routing](https://github.com/stoatworks-labs/fleet-notes/blob/main/notes/reference_superrack_routing.md).
 
-**Phase 2 device: it LOADS as of 2026-08-05.** `MixerReturn` appears in the CoreAudio device
-list in a clean VM, behind a passing control — after a history of never loading once. Built on
-**libASPL** (MIT, `device/src/Driver.cpp`); the from-scratch AudioServerPlugIn was deleted.
-Scope it: coreaudiod accepts the bundle, and that is all. **No audio has been through it** —
-summing unverified, helper daemon unwritten, never run on the host or in a real host app.
+**Phase 2 device: it PASSES AUDIO as of 2026-08-25.** Built on **libASPL** (MIT,
+`device/src/Driver.cpp`); the from-scratch AudioServerPlugIn was deleted. It loaded on
+2026-08-05; the round trip works now. `device/tools/vmtest.sh --verify` measures every Sum
+port arriving on both legs of bus 1 at the level it was sent, buses 2..4 silent, on a fresh
+VM with no manual steps. Scope it: it wraps **no hardware** — the helper daemon is unwritten,
+the clock is free-running, and SuperRack has never seen it.
+
+Getting there meant two faults stacked, and **the first made the second invisible** — the
+generalisable half is in [audio input over ssh is denied by
+tcc](https://github.com/stoatworks-labs/fleet-notes/blob/main/notes/reference_audio_input_over_ssh_tcc.md).
+macOS gates audio *input* behind TCC, ssh cannot prompt, so tccd denies and the denial is
+**silent**: coreaudiod zero-fills and never asks the driver, so `OnReadClientInput` logged
+zero calls and it read exactly like a broken return path. **BlackHole settled it in one
+command** — a known-good loopback with none of our code probed as an equally empty matrix in
+the same VM. Under that was a real bug: `Mix` is `[BusChannels][MaxFrames]` and a single
+`memset` sized `BusChannels * frames` clears row 0 and nothing else, so rows 1..7 accumulated
+forever. The `bus1Peak` diagnostic only ever peaked `mix[0]` — the one correct row — and
+reported the same healthy number from the broken and the fixed build. **A control beats a
+theory; build the control first** (`device/AGENTS.md` §2, §4a).
 
 Two things that did *not* turn out to be true, both worth not rediscovering: the "device
 appears with Int16, vanishes with Float32" mystery **does not reproduce**, and the
