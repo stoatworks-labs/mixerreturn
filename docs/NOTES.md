@@ -9,9 +9,12 @@ Cross-cutting notes that are not specific to this repo live in
 
 *mixerreturn — shared summing bus letting a Dugan Automixer bolt onto a desk without one; phase 1 plugin done, phase 2 virtual audio device deferred*
 
-**mixerreturn** (`~/Projects/mixerreturn`, JUCE/C++ VST3+AU+Standalone, MIT, v0.1.0).
-Started 2026-08-02. **PUBLIC** at github.com/stoatworks-labs/mixerreturn, ships the AI
-disclaimer. **LIVE** at stoatworks-labs.com/software/mixerreturn/. No video yet, not tagged.
+**mixerreturn** (`~/Projects/mixerreturn`, JUCE/C++ VST3+AU+Standalone, MIT, **v0.4.0**,
+tagged 2026-08-18). Started 2026-08-02. **PUBLIC** at
+github.com/stoatworks-labs/mixerreturn, ships the AI disclaimer. **LIVE** at
+stoatworks-labs.com/software/mixerreturn/. Four tags so far — v0.1.0, v0.2.0, v0.3.0
+(the two-rack topology, 2026-08-04) and v0.4.0 — and the README's download block
+carries 0.4.0 assets for macOS, Windows and Linux. No video yet.
 
 `mrshot` renders the editor straight to PNG (send/sum/pair) — screen-capturing the
 standalone was unreliable *and* could never show a populated bus, since one process = one
