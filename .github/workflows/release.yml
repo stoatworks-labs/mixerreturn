@@ -174,7 +174,7 @@ jobs:
     runs-on: ubuntu-latest
     # makensis cross-compiles, so the installers are wrapped here from the zips
     # the Windows jobs uploaded. A plugin has no executable to shortcut, so the
-    # installer is --cli: it drops the VST3 into the common VST3 folder.
+    # installer is --plain: it drops the VST3 into the common VST3 folder.
     steps:
       - uses: actions/checkout@v4
 
@@ -199,7 +199,7 @@ jobs:
             rm -rf "$stage"; mkdir -p "$stage"
             unzip -q "$zip" -d "$stage"
             cp README.md LICENSE "$stage/" 2>/dev/null || true
-            rl_nsis "windows-${arch}" "$stage" --cli
+            rl_nsis "windows-${arch}" "$stage" --plain
           done
           ls -l installers 2>/dev/null || true
 
