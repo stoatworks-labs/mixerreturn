@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(MixerReturn VERSION 0.4.1)
+project(MixerReturn VERSION 0.4.2)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
