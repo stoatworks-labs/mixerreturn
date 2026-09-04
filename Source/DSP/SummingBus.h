@@ -73,8 +73,13 @@ public:
     void readSum (float* dst, int channel, int numSamples) noexcept;
 
     /** Signals that this member has finished the block. The last to arrive flips the
-        pages. Must be called exactly once per member per block. */
-    void arrive() noexcept;
+        pages. Must be called exactly once per member per block.
+
+        Takes the caller's slot, because arriving is also what registers the member
+        with the barrier: a slot is reserved on the message thread long before the
+        host starts processing that instance, and counting it from then on leaves
+        every block one arrival short of flipping. */
+    void arrive (int slot) noexcept;
 
 private:
     struct Slot
@@ -83,6 +88,14 @@ private:
         std::atomic<bool> claimed { false };
         /** Published to readers only once the buffers are sized and zeroed. */
         std::atomic<bool> active { false };
+        /** Whether this slot is currently included in the barrier's expected count.
+            Set when the slot is taken, cleared when the barrier drops a member that
+            has stopped arriving, and set again the moment it arrives once more. */
+        std::atomic<bool> counted { false };
+        /** Whether this member has already arrived in the round now in progress.
+            A second arrival before the round completes means some other counted
+            member is no longer being processed — see arrive(). */
+        std::atomic<bool> arrivedThisRound { false };
         // [page][channel][sample], flattened per page/channel into one vector.
         std::array<std::array<std::vector<float>, maxChannels>, 2> pages;
     };

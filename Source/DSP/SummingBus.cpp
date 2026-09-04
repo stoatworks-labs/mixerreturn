@@ -33,6 +33,8 @@ int SummingBus::acquireSlot (int blockSize, int numChannels)
             }
         }
 
+        s.counted.store (true, std::memory_order_release);
+        s.arrivedThisRound.store (false, std::memory_order_release);
         members.fetch_add (1, std::memory_order_acq_rel);
         s.active.store (true, std::memory_order_release);
         return i;
@@ -51,7 +53,12 @@ void SummingBus::releaseSlot (int slot)
     if (! s.active.exchange (false, std::memory_order_acq_rel))
         return;
 
-    members.fetch_sub (1, std::memory_order_acq_rel);
+    // Only if it is still counted — the barrier may already have dropped it for
+    // not arriving. See arrive().
+    if (s.counted.exchange (false, std::memory_order_acq_rel))
+        members.fetch_sub (1, std::memory_order_acq_rel);
+
+    s.arrivedThisRound.store (false, std::memory_order_release);
 
     // A member leaving mid-block would otherwise strand the barrier one arrival short
     // for the rest of that block.
@@ -112,18 +119,73 @@ void SummingBus::readSum (float* dst, int channel, int numSamples) noexcept
     }
 }
 
-void SummingBus::arrive() noexcept
+void SummingBus::arrive (int slot) noexcept
 {
-    const auto count   = arrived.fetch_add (1, std::memory_order_acq_rel) + 1;
+    if (slot < 0 || slot >= maxSlots)
+        return;
+
+    auto& self = slots[(size_t) slot];
+
+    // A slot that was dropped for not arriving (below) rejoins as soon as it is
+    // processed again.
+    if (! self.counted.exchange (true, std::memory_order_acq_rel))
+        members.fetch_add (1, std::memory_order_acq_rel);
+
+    // The barrier counts SLOT HOLDERS, and a slot is taken in prepareToPlay on the
+    // message thread — so an instance the host has not started processing, or has
+    // stopped processing, is counted and never arrives. With M counted and K < M
+    // actually processed the flip condition is never met, and the pages turn over
+    // once every ceil(M/K) blocks: senders overwrite their own write page and
+    // readers see the same page twice. That is a repeated block and a dropped
+    // block, not the uniform one-block delay AGENTS.md §2 calls the rule that
+    // matters most, and it persists for as long as the idle instance holds a slot.
+    //
+    // Nothing can tell the barrier that member has gone. But in a healthy round
+    // every member arrives exactly once, so this member arriving a SECOND time
+    // before the round closed means some other counted member is not arriving at
+    // all. Flip on that rather than waiting for one that will never come, and drop
+    // whoever missed the round so the count converges on who is really here. One
+    // disturbed block, then correct — instead of alternating forever.
+    const bool stalled = self.arrivedThisRound.exchange (true, std::memory_order_acq_rel);
+
+    const auto count    = arrived.fetch_add (1, std::memory_order_acq_rel) + 1;
     const auto expected = members.load (std::memory_order_relaxed);
 
     // >= rather than == so that a member disappearing mid-block cannot wedge the
     // barrier permanently. The cost is that a reconfiguration can flip twice in one
     // block, which is an audible tick at worst and self-corrects on the next one.
-    if (count >= expected)
+    if (count >= expected || stalled)
     {
+        if (stalled)
+        {
+            for (auto& s : slots)
+                if (s.active.load (std::memory_order_acquire)
+                    && s.counted.load (std::memory_order_acquire)
+                    && ! s.arrivedThisRound.load (std::memory_order_acquire))
+                {
+                    s.counted.store (false, std::memory_order_release);
+                    members.fetch_sub (1, std::memory_order_acq_rel);
+                }
+        }
+
+        for (auto& s : slots)
+            s.arrivedThisRound.store (false, std::memory_order_release);
+
         writePage.fetch_xor (1, std::memory_order_acq_rel);
-        arrived.store (0, std::memory_order_release);
+
+        // On the stall path this arrival is not the END of the round that just
+        // closed — that round is being abandoned — it is the FIRST arrival of the
+        // new one. Counting it as zero leaves the new round permanently one short,
+        // which just moves the fault along by a block instead of curing it.
+        if (stalled)
+        {
+            self.arrivedThisRound.store (true, std::memory_order_release);
+            arrived.store (1, std::memory_order_release);
+        }
+        else
+        {
+            arrived.store (0, std::memory_order_release);
+        }
     }
 }
 

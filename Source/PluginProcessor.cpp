@@ -214,7 +214,7 @@ void MixerReturnAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         }
 
         // Last thing in the block, always: this is what flips the pages.
-        bus.arrive();
+        bus.arrive (slotOf (current));
     }
     else if (mode == mr::params::OutputMode::busSum)
     {
@@ -247,7 +247,7 @@ void MixerReturnAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& 
         for (int ch = 0; ch < numChannels; ++ch)
             bus.clearSlot (slotOf (current), ch, numSamples);
 
-        bus.arrive();
+        bus.arrive (slotOf (current));
     }
 
     sendPeak.store (0.0f, std::memory_order_relaxed);

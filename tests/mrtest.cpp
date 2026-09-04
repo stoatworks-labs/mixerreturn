@@ -147,6 +147,64 @@ float expectedSumForBlock (int blockIndex, int numSenders)
     return total;
 }
 
+/** An instance that holds a slot but is not being processed must not break the bus.
+ *
+ *  This is the case every other test here is constructed to avoid: Rig prepares its
+ *  instances and then processes ALL of them on every block, so the barrier's count
+ *  and its arrivals always agree. A real rig does not work like that. prepareToPlay
+ *  takes a slot on the message thread, and the host may not call processBlock on
+ *  that instance for many blocks — or may stop calling it. While that is true the
+ *  barrier is one arrival short of flipping, the pages turn over once every
+ *  ceil(M/K) blocks, and the sum on the return alternates between repeating a block
+ *  and dropping one.
+ */
+void testIdleSlotHolder()
+{
+    std::printf ("\n-- an instance holding a slot without being processed --\n");
+
+    Rig rig (4, 3);
+
+    // A fifth instance on the same bus: prepared, so it holds a slot and is counted,
+    // but never processed. Exactly the "loaded into a rack the host is still wiring
+    // up" case.
+    auto idle = std::make_unique<MixerReturnAudioProcessor>();
+    setChoice (*idle, mr::params::busSelect, 3, mr::numBuses);
+    setChoice (*idle, mr::params::outputMode, (int) mr::params::OutputMode::input, 3);
+    setBool (*idle, mr::params::sendEnable, true);
+    setBool (*idle, mr::params::sendMute, false);
+    idle->setPlayConfigDetails (2, 2, sampleRate, blockSize);
+    idle->prepareToPlay (sampleRate, blockSize);
+
+    // Two blocks of settling, and that number is the claim being made. The barrier
+    // cannot know the idle member has gone until a member arrives twice, which is
+    // in block 1; the flip that resolves it lands mid-block, so block 1's page is
+    // torn — and because the bus is a one-block delay, that torn page is what gets
+    // READ in block 2. From block 3 the count has converged and every block must be
+    // the ordinary uniform delay. Before the fix this never converged at all.
+    rig.runBlock (0, false);
+    rig.runBlock (1, false);
+    rig.runBlock (2, false);
+
+    bool allGood = true;
+
+    for (int block = 3; block < 24; ++block)
+    {
+        const auto got      = rig.runBlock (block, false);
+        const auto expected = expectedSumForBlock (block - 1, 4);
+
+        if (std::abs (got - expected) > 0.001f)
+        {
+            if (allGood)
+                std::printf ("  FAIL  block %d: got %.9f, expected %.9f\n", block, got, expected);
+            allGood = false;
+        }
+    }
+
+    check (allGood, "an idle slot holder does not disturb the one-block delay");
+
+    idle->releaseResources();
+}
+
 void testOrderIndependence (bool masterFirst)
 {
     constexpr int numSenders = 3;
@@ -479,6 +537,7 @@ int main()
 
     testOrderIndependence (false);
     testOrderIndependence (true);
+    testIdleSlotHolder();
     testLatencyReporting();
     testLatencyFollowsActualBlockSize();
     testTrimAndMute();

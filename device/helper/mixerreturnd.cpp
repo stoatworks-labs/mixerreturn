@@ -362,10 +362,13 @@ void Usage(const char* argv0)
         "usage: %s --list\n"
         "       %s --device <uid-or-name>\n"
         "       %s --dump\n"
+        "       %s --reset-shm\n"
         "\n"
         "Wraps a physical CoreAudio device and exchanges audio with the MixerReturn\n"
-        "driver through %s.  --dump inspects that region from outside.\n",
-        argv0, argv0, argv0, MR_SHM_NAME);
+        "driver through %s.  --dump inspects that region from outside; --reset-shm\n"
+        "removes it, for a region left behind at the wrong size (mrshmprobe creates\n"
+        "the same name at 8 bytes).  Stop the driver first.\n",
+        argv0, argv0, argv0, argv0, MR_SHM_NAME);
 }
 
 const char* StateName(uint32_t s)
@@ -395,6 +398,22 @@ int Dump()
             MR_SHM_NAME, strerror(errno));
         return 1;
     }
+    // Same trap as the helper's own setup: mmap past the end of a shared-memory object
+    // succeeds, and the first read of those pages is a SIGBUS. A diagnostic tool that
+    // crashes on the broken case is the one case it exists for.
+    struct stat shmStat {};
+    if (fstat(fd, &shmStat) != 0) {
+        std::perror("fstat");
+        return 1;
+    }
+    if ((size_t) shmStat.st_size < sizeof(MRShared)) {
+        std::fprintf(stderr,
+            "region at %s is %lld bytes, not the %zu this build expects — stale, or made by\n"
+            "something else (mrshmprobe creates the same name at 8 bytes). Nothing to read.\n",
+            MR_SHM_NAME, (long long) shmStat.st_size, sizeof(MRShared));
+        return 1;
+    }
+
     void* p = mmap(nullptr, sizeof(MRShared), PROT_READ, MAP_SHARED, fd, 0);
     if (p == MAP_FAILED) {
         std::perror("mmap");
@@ -460,6 +479,7 @@ int main(int argc, char** argv)
     std::string want;
     bool list = false;
     bool dump = false;
+    bool resetShm = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -467,12 +487,29 @@ int main(int argc, char** argv)
             list = true;
         } else if (a == "--dump") {
             dump = true;
+        } else if (a == "--reset-shm") {
+            resetShm = true;
         } else if (a == "--device" && i + 1 < argc) {
             want = argv[++i];
         } else {
             Usage(argv[0]);
             return 2;
         }
+    }
+
+    // The escape hatch for a stale region left at the wrong size — by an older build,
+    // or by mrshmprobe, which creates this same name at 8 bytes. Nothing unlinks the
+    // region otherwise, so it outlives whatever made it. Deliberately explicit rather
+    // than automatic: unlinking while the driver has the region mapped would leave it
+    // reading a region nothing writes.
+    if (resetShm) {
+        if (shm_unlink(MR_SHM_NAME) != 0 && errno != ENOENT) {
+            std::perror("shm_unlink");
+            return 1;
+        }
+        std::printf("removed %s — stop the driver (or reboot) if it still has it mapped\n",
+                    MR_SHM_NAME);
+        return 0;
     }
 
     if (list) {
@@ -543,6 +580,28 @@ int main(int argc, char** argv)
     // shm_open honours umask, so the mode above is not necessarily what landed — and the
     // driver runs as _coreaudiod, not as whoever started this.
     fchmod(fd, 0666);
+
+    // EINVAL above is tolerated because macOS returns it when the region ALREADY EXISTS
+    // AT A DIFFERENT SIZE — and nothing in this tree ever calls shm_unlink, so a region
+    // from a previous run, or from mrshmprobe (which creates this same name at 8 bytes),
+    // outlives the process that made it. Tolerating the error without then checking the
+    // size is what makes this fatal: mmap beyond the end of a shared-memory object
+    // SUCCEEDS, and the memset below is the first thing to touch those pages, so the
+    // helper died on SIGBUS before printing anything.
+    struct stat shmStat {};
+    if (fstat(fd, &shmStat) != 0) {
+        std::perror("fstat");
+        return 1;
+    }
+    if ((size_t) shmStat.st_size < sizeof(MRShared)) {
+        std::fprintf(stderr,
+            "%s exists at %lld bytes but %zu are needed.\n"
+            "That is a stale region from an earlier run or from mrshmprobe, which creates\n"
+            "this same name at 8 bytes. It cannot safely be resized while another process\n"
+            "may have it mapped. Stop the driver, then:  %s --reset-shm\n",
+            MR_SHM_NAME, (long long) shmStat.st_size, sizeof(MRShared), argv[0]);
+        return 1;
+    }
 
     void* mapped = mmap(nullptr, sizeof(MRShared), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (mapped == MAP_FAILED) {
