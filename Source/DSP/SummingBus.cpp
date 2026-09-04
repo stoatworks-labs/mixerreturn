@@ -67,6 +67,36 @@ void SummingBus::releaseSlot (int slot)
     s.claimed.store (false, std::memory_order_release);
 }
 
+void SummingBus::writeSlot (int slot, int channel, const float* src, int numSamples,
+                            float startGain, float endGain) noexcept
+{
+    if (slot < 0 || slot >= maxSlots || channel < 0 || channel >= maxChannels)
+        return;
+
+    const auto page = (size_t) writePage.load (std::memory_order_acquire);
+    auto& dst = slots[(size_t) slot].pages[page][(size_t) channel];
+
+    const auto n = (size_t) std::min (numSamples, (int) dst.size());
+
+    if (n > 0)
+    {
+        // Linear across the block. The last sample lands exactly on endGain so
+        // the next block starts where this one finished — a ramp that stopped
+        // one step short would reintroduce the step it exists to remove.
+        const auto step = n > 1 ? (endGain - startGain) / (float) (n - 1) : 0.0f;
+        auto gain = startGain;
+
+        for (size_t i = 0; i < n; ++i)
+        {
+            dst[i] = src[i] * gain;
+            gain += step;
+        }
+    }
+
+    // Anything beyond this block must not survive from a previous, longer one.
+    std::fill (dst.begin() + (long) n, dst.end(), 0.0f);
+}
+
 void SummingBus::writeSlot (int slot, int channel, const float* src, int numSamples, float gain) noexcept
 {
     if (slot < 0 || slot >= maxSlots || channel < 0 || channel >= maxChannels)

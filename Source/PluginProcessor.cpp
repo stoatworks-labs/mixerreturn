@@ -116,10 +116,25 @@ void MixerReturnAudioProcessor::leaveBus()
 
 void MixerReturnAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused (sampleRate);
-
     preparedBlock = samplesPerBlock;
     scratch.setSize (mr::maxChannels, samplesPerBlock, false, true, false);
+
+    // 15 ms. Long enough that a mute is a fade rather than a click, short enough
+    // that it is not a fade anyone would call one — an operator hitting mute
+    // expects it gone, not ducked. Trim rides on the same constant so a fader
+    // move and a mute behave the same way.
+    const double rampSeconds = 0.015;
+    sendSmoothed.reset (sampleRate, rampSeconds);
+    outSmoothed.reset (sampleRate, rampSeconds);
+
+    // Start settled at whatever the parameters already say, so loading a session
+    // with the trim down does not fade up from silence on the first block.
+    const bool sending = *apvts.getRawParameterValue (mr::params::sendEnable) > 0.5f
+                      && *apvts.getRawParameterValue (mr::params::sendMute) < 0.5f;
+    sendSmoothed.setCurrentAndTargetValue (
+        sending ? mr::params::trimToGain (*apvts.getRawParameterValue (mr::params::sendTrim)) : 0.0f);
+    outSmoothed.setCurrentAndTargetValue (
+        mr::params::trimToGain (*apvts.getRawParameterValue (mr::params::outputTrim)));
 
     // Deliberately *not* clearing observedBlock here.
     //
@@ -170,9 +185,25 @@ void MixerReturnAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     const bool sending = *apvts.getRawParameterValue (mr::params::sendEnable) > 0.5f
                       && *apvts.getRawParameterValue (mr::params::sendMute) < 0.5f;
 
-    const auto sendGain = mr::params::trimToGain (*apvts.getRawParameterValue (mr::params::sendTrim));
-    const auto outGain  = mr::params::trimToGain (*apvts.getRawParameterValue (mr::params::outputTrim));
-    const auto mode     = (mr::params::OutputMode) (int) *apvts.getRawParameterValue (mr::params::outputMode);
+    // Mute folded into the send gain: a mute is a ramp to zero, not a switch
+    // between writing and clearing at a block boundary.
+    sendSmoothed.setTargetValue (
+        sending ? mr::params::trimToGain (*apvts.getRawParameterValue (mr::params::sendTrim)) : 0.0f);
+    outSmoothed.setTargetValue (
+        mr::params::trimToGain (*apvts.getRawParameterValue (mr::params::outputTrim)));
+
+    // Both ends of this block's ramp, taken once so every channel gets the same
+    // one — advancing the smoother per channel would ramp the first channel and
+    // hand the rest a settled value, which is a channel-dependent gain.
+    const auto sendStart = sendSmoothed.getCurrentValue();
+    sendSmoothed.skip (numSamples);
+    const auto sendEnd = sendSmoothed.getCurrentValue();
+
+    const auto outStart = outSmoothed.getCurrentValue();
+    outSmoothed.skip (numSamples);
+    const auto outEnd = outSmoothed.getCurrentValue();
+
+    const auto mode = (mr::params::OutputMode) (int) *apvts.getRawParameterValue (mr::params::outputMode);
 
     float sendMagnitude = 0.0f;
 
@@ -183,19 +214,28 @@ void MixerReturnAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         auto& bus = mr::BusRegistry::get().bus (busOf (current));
         const auto slot = slotOf (current);
 
+        // Still writing while the ramp is running, even into a mute — writing at
+        // a gain of zero IS clearing the slot, so the rule that a muted member
+        // must not simply skip writing still holds. clearSlot is only taken once
+        // the ramp has arrived at silence, where it is the cheaper way to say the
+        // same thing.
+        const bool silent = sendStart == 0.0f && sendEnd == 0.0f;
+
         for (int ch = 0; ch < numChannels; ++ch)
         {
-            if (sending)
-            {
-                bus.writeSlot (slot, ch, buffer.getReadPointer (ch), numSamples, sendGain);
-                sendMagnitude = juce::jmax (sendMagnitude,
-                                            buffer.getMagnitude (ch, 0, numSamples) * sendGain);
-            }
-            else
+            if (silent)
             {
                 // Not simply "skip writing": a muted member's previous block would
                 // otherwise stay in the sum forever.
                 bus.clearSlot (slot, ch, numSamples);
+            }
+            else
+            {
+                bus.writeSlot (slot, ch, buffer.getReadPointer (ch), numSamples,
+                               sendStart, sendEnd);
+                sendMagnitude = juce::jmax (sendMagnitude,
+                                            buffer.getMagnitude (ch, 0, numSamples)
+                                                * juce::jmax (sendStart, sendEnd));
             }
         }
 
@@ -223,7 +263,7 @@ void MixerReturnAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         buffer.clear();
     }
 
-    buffer.applyGain (outGain);
+    buffer.applyGainRamp (0, numSamples, outStart, outEnd);
 
     sendPeak.store (sendMagnitude, std::memory_order_relaxed);
     outputPeak.store (buffer.getMagnitude (0, numSamples), std::memory_order_relaxed);

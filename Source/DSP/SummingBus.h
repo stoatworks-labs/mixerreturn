@@ -65,6 +65,16 @@ public:
     /** Copies src into this slot's write page, scaled by gain. */
     void writeSlot (int slot, int channel, const float* src, int numSamples, float gain) noexcept;
 
+    /** As above, but ramping linearly from startGain to endGain across the block.
+
+        A trim read once per block and applied flat is a step at every block
+        boundary — at 96 kHz with SuperRack's 256-sample blocks, one every 2.7 ms
+        while a fader is moving, which zippers. Mute is the same fault at full
+        scale: an instantaneous discontinuity. These are console controls with
+        faders on them, so they get ridden live. */
+    void writeSlot (int slot, int channel, const float* src, int numSamples,
+                    float startGain, float endGain) noexcept;
+
     /** Zeroes this slot's write page. A muted or non-sending member must call this, not
         simply skip writing — its previous block would otherwise persist in the sum. */
     void clearSlot (int slot, int channel, int numSamples) noexcept;

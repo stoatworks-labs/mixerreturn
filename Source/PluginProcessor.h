@@ -98,6 +98,17 @@ private:
 
     juce::AudioBuffer<float> scratch;
 
+    // Ramped rather than applied flat per block. A trim read once and held across
+    // 256 samples steps at every block boundary — a zipper while a fader moves —
+    // and mute does it at full scale. See processBlock.
+    //
+    // Mute is folded into sendSmoothed's target rather than switching between
+    // writeSlot and clearSlot at a boundary: writing with a gain of zero already
+    // satisfies "a muted member must clear its slot, not skip writing", and it
+    // gets there down a ramp instead of a cliff.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> sendSmoothed;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> outSmoothed;
+
     std::atomic<float> sendPeak   { 0.0f };
     std::atomic<float> outputPeak { 0.0f };
 

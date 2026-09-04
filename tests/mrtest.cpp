@@ -301,20 +301,119 @@ void testTrimAndMute()
     std::printf ("\n-- send trim and mute --\n");
     Rig rig (2, 3);
 
+    // Trim and mute are SMOOTHED — a 15 ms ramp, which at 96 kHz and 64-sample
+    // blocks is about 23 blocks. These checks are about the settled value, so
+    // they have to let it settle first; the ramp itself is asserted separately
+    // in testTrimAndMuteRamp, which is the property that actually matters on a
+    // PA and which this test, running one block per change, could never see.
+    constexpr int settleBlocks = 40;
+
     // The trim parameter has a 0.1 dB step, so the expectation has to be built from the
     // value the parameter can actually hold, not from a convenient round number.
     setTrimDb (*rig.senders[0], mr::params::sendTrim, -6.0f);
-    rig.runBlock (0, false);
-    const auto withTrim = rig.runBlock (1, false);
-    // Block 0 values: sender0 = 0.01 (trimmed), sender1 = 0.02.
+    for (int b = 0; b < settleBlocks; ++b)
+        rig.runBlock (b, false);
+
+    const auto withTrim = rig.runBlock (settleBlocks, false);
+    // The master reads the PREVIOUS block's page, so this is block settleBlocks-1:
+    // sender0 = (settleBlocks) * 0.01 trimmed, sender1 = (settleBlocks) * 0.02.
     const auto trimGain = juce::Decibels::decibelsToGain (-6.0f);
-    checkClose (withTrim, 0.01f * trimGain + 0.02f, "-6 dB trim scales that sender's contribution");
+    const auto v = (float) settleBlocks;
+    checkClose (withTrim, v * 0.01f * trimGain + v * 0.02f,
+                "-6 dB trim scales that sender's contribution");
 
     setBool (*rig.senders[0], mr::params::sendMute, true);
-    rig.runBlock (2, false);
-    const auto muted = rig.runBlock (3, false);
-    // Block 2 values: sender0 = 0.03 (muted), sender1 = 0.06.
-    checkClose (muted, 0.06f, "muting removes that sender and leaves nothing stale behind");
+    for (int b = settleBlocks + 1; b < settleBlocks * 2; ++b)
+        rig.runBlock (b, false);
+
+    const auto muted = rig.runBlock (settleBlocks * 2, false);
+    const auto m = (float) (settleBlocks * 2);
+    checkClose (muted, m * 0.02f, "muting removes that sender and leaves nothing stale behind");
+}
+
+/** The transition, which is the whole point of smoothing them.
+ *
+ *  Trim and mute used to be read once per block and applied flat across it, so
+ *  every block boundary crossed during a fader move was a step discontinuity in
+ *  the summed return, and a mute was an instantaneous full-scale one. At 96 kHz
+ *  with SuperRack's 256-sample blocks that is a step every 2.7 ms while the
+ *  fader is moving. These are console controls with faders on them; they get
+ *  ridden live.
+ *
+ *  The input is held CONSTANT here, unlike Rig::runBlock, so the only thing that
+ *  can move the output is the gain. Any jump between consecutive output samples
+ *  is therefore the gain stepping.
+ */
+void testTrimAndMuteRamp()
+{
+    std::printf ("\n-- a trim move and a mute are ramps, not steps --\n");
+    Rig rig (1, 5);
+
+    juce::MidiBuffer midi;
+    constexpr float level = 0.5f;
+
+    // Run one block of constant input and return the largest jump between
+    // consecutive samples of the master's output, including the seam with the
+    // previous block's last sample.
+    float previousLast = 0.0f;
+    bool havePrevious = false;
+
+    auto runConstantBlock = [&] () -> float
+    {
+        rig.senderBuffers[0].clear();
+        for (int ch = 0; ch < 2; ++ch)
+            juce::FloatVectorOperations::fill (rig.senderBuffers[0].getWritePointer (ch),
+                                               level, blockSize);
+        rig.masterBuffer.clear();
+        rig.senders[0]->processBlock (rig.senderBuffers[0], midi);
+        rig.master->processBlock (rig.masterBuffer, midi);
+
+        const auto* out = rig.masterBuffer.getReadPointer (0);
+        float worst = 0.0f;
+        if (havePrevious)
+            worst = std::abs (out[0] - previousLast);
+        for (int i = 1; i < blockSize; ++i)
+            worst = juce::jmax (worst, std::abs (out[i] - out[i - 1]));
+
+        previousLast = out[blockSize - 1];
+        havePrevious = true;
+        return worst;
+    };
+
+    // Settle at unity so the ramp under test starts from a known place.
+    for (int b = 0; b < 60; ++b)
+        runConstantBlock();
+
+    // A full-scale mute. Across the whole transition, no single sample-to-sample
+    // step may approach the size of the thing being removed.
+    setBool (*rig.senders[0], mr::params::sendMute, true);
+
+    float worstStep = 0.0f;
+    for (int b = 0; b < 60; ++b)
+        worstStep = juce::jmax (worstStep, runConstantBlock());
+
+    std::printf ("  worst sample-to-sample step across a mute: %.6f (level %.2f)\n",
+                 worstStep, level);
+
+    // A cliff would be the entire contribution in one sample. A 15 ms ramp at
+    // 96 kHz moves about 1/1440 of it per sample; allow generous headroom and
+    // still catch anything remotely like a step.
+    check (worstStep < level * 0.01f, "a mute ramps rather than stepping");
+
+    // And it does get all the way to silence rather than resting part-way.
+    const auto settled = rig.masterBuffer.getMagnitude (0, 0, blockSize);
+    check (settled < 1.0e-6f, "the mute arrives at silence");
+
+    // Unmuting is a ramp too, in the other direction.
+    setBool (*rig.senders[0], mr::params::sendMute, false);
+    float worstUp = 0.0f;
+    for (int b = 0; b < 60; ++b)
+        worstUp = juce::jmax (worstUp, runConstantBlock());
+
+    std::printf ("  worst sample-to-sample step across an unmute: %.6f\n", worstUp);
+    check (worstUp < level * 0.01f, "an unmute ramps rather than stepping");
+    checkClose (rig.masterBuffer.getReadPointer (0)[blockSize - 1], level,
+                "and it arrives back at the full contribution");
 }
 
 void testBypassStillArrives()
@@ -541,6 +640,7 @@ int main()
     testLatencyReporting();
     testLatencyFollowsActualBlockSize();
     testTrimAndMute();
+    testTrimAndMuteRamp();
     testBypassStillArrives();
     testBusIsolation();
     testTwentyFourChannelsShuffled();
