@@ -183,7 +183,7 @@ summing bus, `mrhost` runs that same check through the built VST3 as a host woul
 
 ## Status
 
-v0.3.0. The summing bus is verified numerically — including 24 senders with the processing
+v0.4.2. Since v0.3.0: prebuilt plugins for Windows and Linux alongside macOS; a Windows installer that no longer touches the system PATH (v0.4.1); and, in v0.4.2, send trim, output trim and mute ramped across the block rather than stepped once per block — which at 256-sample blocks was a zipper on a fader ridden live and a full-scale click on mute — the barrier converging on the instances actually being processed, and a refusal of a too-short shared-memory region. The Phase 2 device in `device/`, rebuilt on libASPL in v0.4.0, now loads and appears in the device list and sums on its Sum ports, but its return leg is still silence and no host has been tested against it. The summing bus is verified numerically — including 24 senders with the processing
 order reshuffled on every block, and 17 instances processing concurrently on their own
 threads — it is clean under ThreadSanitizer, `pluginval` passes at strictness 8, and the
 built VST3 has been loaded as a host loads it, confirming that instances created from one
