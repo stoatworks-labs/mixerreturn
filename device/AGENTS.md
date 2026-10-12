@@ -1,7 +1,7 @@
 # AGENTS.md — picking up the Phase 2 device cold
 
 Orientation for whoever continues this, human or model. The repo root's `AGENTS.md` covers
-the **plugin** (Phase 1, shipped at v0.3.0). This file covers the **device** (Phase 2, not
+the **plugin** (Phase 1, shipped, now v0.4.2). This file covers the **device** (Phase 2, not
 working yet) and, more importantly, what has already been tried so it is not tried again.
 
 Read `README.md` in this directory first for the architecture. This file is about state,
@@ -20,9 +20,9 @@ silent — the shipped default crosspoint, exactly as `vmtest.sh` predicts it. A
 the Sum ports and comes back out the bus returns. See §4a for how, and for the two separate
 faults that were sitting on top of each other.
 
-Scope it: the device sums, and the round trip is numerically right. The helper daemon still
-does not exist, so it wraps no physical interface, and nothing has been tested in a real host
-application.
+Scope it: the device sums, and the round trip is numerically right. The helper daemon exists
+(§5a), but the driver side isn't wired to it yet, so it wraps no physical interface, and
+nothing has been tested in a real host application.
 
 Evidence — every run on a freshly cloned VM, all on 2026-08-05:
 

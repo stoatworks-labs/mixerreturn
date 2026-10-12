@@ -47,7 +47,7 @@ plugin in the chain at all and the routing decision moves to where the rack is p
 
 ## Status: the UI, running on a simulated device
 
-**There is no driver yet.** Everything below the `Device` seam in `web-ui/app.js` is
+**It isn't wired to the driver yet.** Everything below the `Device` seam in `web-ui/app.js` is
 simulated — channel names come from a fixed descriptor and levels from a wandering signal
 generator. The `SIMULATED` chip in the menu bar and the status line at the foot both say so,
 and they stay lit until a real backend replaces that seam. A control surface that looks

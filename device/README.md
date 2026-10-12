@@ -68,7 +68,7 @@ see each other's timing; a driver has no ordering to defend against.
 ```
 device/
   src/mr_shared.h     the driver <-> helper contract: shared memory layout, ring buffers
-  src/mr_driver.c     the AudioServerPlugIn itself
+  src/Driver.cpp      the AudioServerPlugIn itself, built on libASPL
   Info.plist.in       bundle metadata; CFPlugInFactories points at the factory function
 ```
 

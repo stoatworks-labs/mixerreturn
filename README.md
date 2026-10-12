@@ -182,9 +182,10 @@ Windows installer that no longer touches the system PATH (v0.4.1). v0.4.2 ramps 
 output trim and mute across the block instead of stepping them once per block (at 256-sample
 blocks that was a zipper on a fader ridden live and a full-scale click on mute), makes the
 barrier converge on the instances actually being processed, and refuses a shared-memory region
-that's too short. The Phase 2 device in `device/`, rebuilt on libASPL in v0.4.0, now loads,
-appears in the device list and sums on its Sum ports, but its return leg is still silence and no
-host has been tested against it.
+that's too short. The Phase 2 device in `device/`, rebuilt on libASPL in v0.4.0, now loads and
+passes audio in a test VM: since v0.4.1, what goes into its Sum ports comes back on its bus
+returns at the level it was sent. It doesn't wrap a real interface yet, and no host has been
+tested against it.
 
 The summing bus is verified numerically, including 24 senders with the processing order
 reshuffled on every block and 17 instances processing concurrently on their own threads. It's
