@@ -1,22 +1,18 @@
 # MixerReturn
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
-> (Anthropic), directed and reviewed by a human author. The summing bus has been verified
-> numerically against the actual shipped processor class — a one-block delay with the
-> summing instance processed both first and last, 24 senders with the host's processing
-> order reshuffled on every block, 400 blocks with 17 instances racing on their own
-> threads, plus trim, mute, bypass participation and bus isolation (`mrtest`), and it is
-> clean under ThreadSanitizer. `pluginval` passes clean at strictness 8 on VST3, and on AU
-> with one known benign wrapper warning. It **has** been run with real audio in Waves
-> SuperRack Performer v15.15.12 on macOS, over a loopback virtual device: pass-through is
-> bit-exact and adds no delay, the sum equals the sum of its senders delayed by exactly one
-> block with 0 of 143744 samples in error, trim and mute are exact, and a bypassed instance
-> contributes zero without wedging the barrier. It has **not** been run against a real
-> console and **not** been used on a show. Every claim about SQ behaviour comes from the
-> reference guide, not from hardware. Review before use on live gear.
+> (Anthropic), directed and reviewed by a human author. The summing bus is verified numerically
+> against the shipped processor class (`mrtest`): a one-block delay with the summing instance
+> processed both first and last, 400 blocks with 17 instances racing on their own threads, and
+> trim, mute, bypass participation and bus isolation. `pluginval` passes clean at strictness 8
+> on VST3, and on AU with one known benign wrapper warning. It **has** been run with real audio
+> in Waves SuperRack Performer on macOS, over a loopback virtual device. It **hasn't** been run
+> against a real console or used on a show, and every claim about SQ behaviour comes from the
+> reference guide, not from hardware. Check it over before you use it on live gear. The full
+> rundown is in the Status section below.
 
-Bolt a Dugan Automixer onto a console that hasn't got one — post-fader, without spending an
-insert slot or a second channel strip per mic.
+A plugin that bolts a Dugan Automixer onto a console that hasn't got one. It runs post-fader,
+and it doesn't cost you an insert slot or a second channel strip per mic.
 
 <!-- downloads:start -->
 
@@ -69,33 +65,30 @@ macOS builds are signed and notarised and open normally. The Windows builds are 
 
 ## What it's for
 
-MixerReturn is an interface for **Waves SuperRack Performer**. It lets the Dugan Automixer
-run across a console's channel **direct outs**, and returns the automixed result summed down
-to a **single stereo pair**, which comes back into a **group's External Input**.
+MixerReturn is an interface for **Waves SuperRack Performer**. It lets the Dugan Automixer run
+across a console's channel **direct outs**, and returns the automixed result summed down to a
+**single stereo pair**, which comes back into a **group's External Input**.
 
-The point is what it *doesn't* cost you. Because the automixer works on the direct outs
-rather than on channel inserts:
+The point is what it *doesn't* cost you. Because the automixer works on the direct outs and not
+on the channel inserts:
 
-- **The insert slots stay free.** You can still insert plugins on the channel strips exactly
-  as normal — the automixer isn't competing for them.
-- **The automixer sits post-fader**, without relocating any insert points.
+- **The insert slots stay free.** You can still put plugins on the channel strips as normal, and
+  the automixer isn't competing for them.
+- **The automixer sits post-fader**, without moving any insert points.
 - **No channel is used twice.** One channel strip per mic, as usual.
-
-In short, it adds an automixer to a desk without taking anything away from it.
 
 | A channel instance | The return instance |
 | --- | --- |
 | ![MixerReturn on a channel: Bus 1 selected, Send enabled, Mute off, send trim at 0.0 dB, the send meter showing programme level, Output set to Input so the rack passes its own audio through, and a readout of 25 members on this bus](docs/screenshots/send.png) | ![MixerReturn as the return: Bus 1 selected, Send disabled so the send meter is empty, Output set to Bus Sum with the output meter showing the summed level, and a readout of 25 members on this bus alongside 64 samples latency](docs/screenshots/sum.png) |
 
-*Both rendered from the real editor by `mrshot`, with a full 24-channel rig registered on
-the bus — which is why the member count and the latency readout are the actual values, not
-a mock-up.*
+*Both rendered from the actual editor by `mrshot`, with a full 24-channel rig registered on the
+bus, so the member count and the latency readout are the real values rather than a mock-up.*
 
 MixerReturn is a VST3/AU/Standalone plugin that gives a plugin host something it doesn't
-otherwise have: a **shared summing bus** spanning many instances. Put one instance in a rack
-fed from each automixed channel, and one more instance set to output the sum. That sum
-returns to the desk as a mix's External Input. Note the feeding rack is a *second* rack per
-mic, not the one running the automixer — see [the signal flow](#the-signal-flow) below.
+otherwise have: a **shared summing bus** spanning many instances. Put one instance in a rack fed
+from each automixed channel, and one more set to output the sum, which goes back to the desk as a
+mix's External Input. Note that the feeding rack is a *second* rack per mic, not the one running
+the automixer (see [the signal flow](#the-signal-flow) below).
 
 ## The signal flow
 
@@ -113,22 +106,23 @@ SLink / Dante / Waves card  ---->  SuperRack Performer
 SQ mix "External Input"  <-------------------------------------------------
 ```
 
-The operator keeps working ordinary channel strips. Dugan sees post-fader signals. No
-insert slots are consumed and no channel is used twice.
+The operator keeps working ordinary channel strips, the Dugan sees post-fader signals, no insert
+slots get used up and no channel is used twice.
 
-**It is two racks per mic.** SuperRack's Dugan is part of a rack's *output stage*, after all
-eight plugin slots, and there is no Dugan to insert as a plugin — so nothing in a rack can be
-downstream of it. A MixerReturn sharing a rack with the Dugan sends the signal from *before*
-the automixer, and the return carries a plain sum with no automixing in it. Measured: rack
-outputs automixed to −4.39 dB while a same-rack MixerReturn's sum carried them at +0.02 dB.
-The second rack, fed over a loopback pair, is what picks the automixed signal back up. See
-[the user guide](docs/USER-GUIDE.md#the-signal-flow).
+**It's two racks per mic.** SuperRack's Dugan is part of a rack's *output stage*, after all
+eight plugin slots, and there's no Dugan you can insert as a plugin, so nothing in a rack can sit
+downstream of it. A MixerReturn sharing a rack with the Dugan sends the signal from *before* the
+automixer, and the return carries a plain sum with no automixing in it. Measured: the rack
+outputs automixed to −4.39 dB while a same-rack MixerReturn's sum carried them at +0.02 dB. The
+second rack, fed over a loopback pair, is what picks the automixed signal back up. There's more
+in [the user guide](docs/USER-GUIDE.md#the-signal-flow).
 
 ## Why this exists
 
-SuperRack's patcher allows **only one rack per output I/O**, so twenty-four rack outputs
-cannot be patched onto one output to sum them. The desk can't sum them either without
-spending twenty-four input channels to do it. This fills that one gap.
+SuperRack's patcher allows **only one rack per output I/O**, so you can't patch twenty-four rack
+outputs onto one output to sum them. The desk can't sum them either, not without spending
+twenty-four input channels on it, and if you had twenty-four spare inputs you probably wouldn't
+be reading this. MixerReturn fills that one gap.
 
 ## Controls
 
@@ -144,24 +138,24 @@ Sending and receiving are independent, so an instance can be a sender, a receive
 
 ## The one thing to know
 
-The bus sum is delayed by **exactly one block**, identically for every sender, no matter
-what order the host processes the instances in. That uniformity is deliberate and is the
-reason the design looks the way it does — a shorter but *uneven* delay across channels
-would comb-filter the sum. See [docs/DESIGN.md](docs/DESIGN.md).
+The bus sum is delayed by **exactly one block**, the same for every sender, whatever order the
+host processes the instances in. That's on purpose, and it's why the design looks the way it
+does: a shorter but *uneven* delay across channels would comb-filter the sum. See
+[docs/DESIGN.md](docs/DESIGN.md).
 
 ## Setting it up on an Allen & Heath SQ
 
-Two console-side details that will bite otherwise:
+Two things on the console side will bite you otherwise:
 
-- **"Follow Fader" on direct outs is global across all 48 channels.** There is no
-  post-fader tap point; post-fader comes from that separate switch, and it is all-or-nothing.
-  If you also multitrack off direct outs, that recording becomes post-fader too. Route
-  multitrack over **tie lines** (post-preamp, bypassing the processing path) instead.
-- **Unroute the automixed channels from the main mix.** The summed return must be their
-  only path there. A channel reaching the mix both directly and through the return will comb.
+- **"Follow Fader" on direct outs is global across all 48 channels.** There's no post-fader tap
+  point. Post-fader comes from that separate switch, and it's all or nothing. If you also
+  multitrack off the direct outs, that recording becomes post-fader too. Route multitrack over
+  **tie lines** (post-preamp, bypassing the processing path) instead.
+- **Unroute the automixed channels from the main mix.** The summed return has to be their only
+  path there. A channel reaching the mix both directly and through the return will comb.
   Pre-fader monitor sends stay inside the desk and are fine.
 
-The SQ core runs at 96 kHz, so the plugin host must too.
+The SQ core runs at 96 kHz, so the plugin host has to as well.
 
 ## Building
 
@@ -169,8 +163,8 @@ The SQ core runs at 96 kHz, so the plugin host must too.
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ```
 
-VST3, AU and Standalone land under `build/`. `mrtest` is a headless numerical check of the
-summing bus, `mrhost` runs that same check through the built VST3 as a host would, and
+VST3, AU and Standalone end up under `build/`. `mrtest` is a headless numerical check of the
+summing bus, `mrhost` runs the same check through the built VST3 the way a host would, and
 `mrshot` regenerates the screenshots above:
 
 ```bash
@@ -183,56 +177,65 @@ summing bus, `mrhost` runs that same check through the built VST3 as a host woul
 
 ## Status
 
-v0.4.2. Since v0.3.0: prebuilt plugins for Windows and Linux alongside macOS; a Windows installer that no longer touches the system PATH (v0.4.1); and, in v0.4.2, send trim, output trim and mute ramped across the block rather than stepped once per block — which at 256-sample blocks was a zipper on a fader ridden live and a full-scale click on mute — the barrier converging on the instances actually being processed, and a refusal of a too-short shared-memory region. The Phase 2 device in `device/`, rebuilt on libASPL in v0.4.0, now loads and appears in the device list and sums on its Sum ports, but its return leg is still silence and no host has been tested against it. The summing bus is verified numerically — including 24 senders with the processing
-order reshuffled on every block, and 17 instances processing concurrently on their own
-threads — it is clean under ThreadSanitizer, `pluginval` passes at strictness 8, and the
-built VST3 has been loaded as a host loads it, confirming that instances created from one
-bundle really do share a bus.
+v0.4.2. Since v0.3.0 there are prebuilt plugins for Windows and Linux alongside macOS, and a
+Windows installer that no longer touches the system PATH (v0.4.1). v0.4.2 ramps send trim,
+output trim and mute across the block instead of stepping them once per block (at 256-sample
+blocks that was a zipper on a fader ridden live and a full-scale click on mute), makes the
+barrier converge on the instances actually being processed, and refuses a shared-memory region
+that's too short. The Phase 2 device in `device/`, rebuilt on libASPL in v0.4.0, now loads,
+appears in the device list and sums on its Sum ports, but its return leg is still silence and no
+host has been tested against it.
 
-**It has now also been run with real audio inside SuperRack Performer** (v15.15.12, 48 kHz,
-256-sample buffer, I/O over a loopback virtual device). Pass-through is bit-exact and adds no
-delay; the sum equals the sum of its senders delayed by exactly one block, uniform across
-every sender, with 0 of 143744 samples in error; −6 dB of send trim comes back as −6.00 dB;
-a muted send comes back as exactly zero; a bypassed instance contributes zero without wedging
-the barrier. That testing is also what found the two-rack topology above, and a latency
-report that was eight times too high.
+The summing bus is verified numerically, including 24 senders with the processing order
+reshuffled on every block and 17 instances processing concurrently on their own threads. It's
+clean under ThreadSanitizer, `pluginval` passes at strictness 8, and the built VST3 has been
+loaded the way a host loads it, which confirmed that instances created from one bundle really do
+share a bus.
 
-It has **not** been run against a real SQ or any console. Nothing here has been near a live
+**It's also been run with real audio inside SuperRack Performer** (v15.15.12, 48 kHz, 256-sample
+buffer, I/O over a loopback virtual device). Pass-through is bit-exact and adds no delay. The sum
+equals the sum of its senders delayed by exactly one block, the same across every sender, with 0
+of 143744 samples in error. A send trim of −6 dB comes back as −6.00 dB, a muted send comes back
+as exactly zero, and a bypassed instance contributes zero without wedging the barrier. That
+testing is also what turned up the two-rack topology above, and a latency report that was eight
+times too high.
+
+It **hasn't** been run against a real SQ or any other console. None of it has been near a live
 show, and every claim about console behaviour still comes from the reference guide.
 
-That concurrent test earned its place: it found a real bug that every sequential test
-passed straight through. The audio path used to take a process-wide try-lock and skip the
-block when it lost, which is invisible on one thread and drops instances out of the sum on
-several. [docs/DESIGN.md](docs/DESIGN.md) has the detail.
+That concurrent test earned its keep: it found a bug that every sequential test sailed straight
+past. The audio path used to take a process-wide try-lock and skip the block when it lost, which
+you'd never see on one thread and which drops instances out of the sum on several.
+[docs/DESIGN.md](docs/DESIGN.md) has the detail.
 
 ## Roadmap
 
 Phase 2 is the original idea: a virtual audio device that wraps a CoreAudio/ASIO/WDM device,
 passes its I/O through, and adds summable virtual ports named `Sum n`.
 
-**The device is the product; the plugin is the version that works without installing one.**
+**The device is the main event. The plugin is the version that works without installing one.**
 
-Once the wrapper exists, a rack's output patch *is* the routing decision — physical output to
-behave as an insert, or a `Sum` port to feed the buses — with no plugin in the chain at all.
-The wrapper is also strictly better technically: a driver receives every Sum port in one
-callback, so it can sum with **no added delay**, where the plugin must cost a block. The
-entire two-page barrier in this plugin exists only because plugin instances cannot see each
-other's timing; a driver has no such problem.
+Once the wrapper exists, a rack's output patch *is* the routing decision (a physical output to
+behave as an insert, or a `Sum` port to feed the buses), with no plugin in the chain at all.
+Technically the wrapper is better in every way: a driver gets every Sum port in one callback, so
+it can sum with **no added delay**, where the plugin has to cost a block. The whole two-page
+barrier in this plugin only exists because plugin instances can't see each other's timing, and a
+driver doesn't have that problem.
 
-What the plugin still gives you, honestly and completely: it exists today; it needs no driver
-install, no admin rights, no notarized system extension and no signed kernel driver; it does
-not depend on successfully wrapping any particular interface; and it therefore runs on locked
-down or rented machines where a system audio device is not an option. That is "easier to
-deploy", not "does something the device cannot". The one capability gap runs the other way —
-routing between separate applications, which a per-process plugin bus can never do.
+What the plugin still gives you, in full: it exists today. It needs no driver install, no admin
+rights, no notarised system extension and no signed kernel driver. It doesn't depend on
+successfully wrapping any particular interface, so it runs on locked-down or rented machines
+where a system audio device isn't an option. That makes it easier to deploy, but it doesn't do
+anything the device can't. The one capability gap runs the other way: routing between separate
+applications, which a per-process plugin bus can never do.
 
-**The target host is SuperRack Performer, not SoundGrid.** An earlier version of this
-document claimed Phase 2 would cover SuperRack SoundGrid; that was wrong. SoundGrid racks
-take their I/O from SoundGrid network hardware rather than from a CoreAudio or ASIO device,
-so a virtual audio device is not visible to SuperRack SoundGrid as rack I/O at all. The
-SoundGrid *driver* is a different matter — it presents CoreAudio/ASIO to the computer like
-any other interface, so it could in principle be the device being wrapped. That is reasoning
-from how the pieces fit, not something tested.
+**The target host is SuperRack Performer, not SoundGrid.** An earlier version of this README said
+Phase 2 would cover SuperRack SoundGrid, which was wrong. SoundGrid racks take their I/O from
+SoundGrid network hardware rather than from a CoreAudio or ASIO device, so SuperRack SoundGrid
+can't see a virtual audio device as rack I/O at all. The SoundGrid *driver* is a different
+matter. It presents CoreAudio/ASIO to the computer like any other interface, so in principle it
+could be the device being wrapped. That's reasoning from how the pieces fit together, and it
+hasn't been tested.
 
 The control surface for it lives in [client/](client/).
 
