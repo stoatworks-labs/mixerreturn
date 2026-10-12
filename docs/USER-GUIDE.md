@@ -4,9 +4,10 @@ MixerReturn is a plugin that **bolts a Dugan Automixer onto a console that hasn'
 post-fader, without spending an insert slot or a second channel strip per mic.
 
 It comes as VST3, AU and Standalone, and gives a plugin host something it doesn't otherwise have:
-**a shared summing bus spanning many instances**. Put one instance after the automixer on each
-channel's rack, and one more set to output the sum, which goes back to the desk as a mix's
-External Input.
+**a shared summing bus spanning many instances**. Put one instance in a rack fed from each
+automixed channel's rack, and one more set to output the sum, which goes back to the desk as a
+mix's External Input. That makes two racks per mic, because nothing can sit after the automixer
+in its own rack (see [the signal flow](#the-signal-flow)).
 
 > **Before you rely on this:** the summing bus is verified numerically against the actual shipped
 > processor class (a one-block delay with the summing instance processed both first and last, 24
@@ -14,12 +15,14 @@ External Input.
 > instances racing on their own threads), and it's clean under ThreadSanitizer. `pluginval` passes
 > at strictness 8.
 >
-> It **has** been loaded in Waves SuperRack Performer v15.15.12 on macOS, where two instances in
-> separate racks both report *"2 members on this bus"*, which confirms in the real host that
-> instances share one registry. **No audio device was attached for that test**, so audio hasn't
-> been heard passing through the sum. It **hasn't been run against a real console or used on a
-> show**. **Every claim about SQ behaviour here comes from the reference guide, not from
-> hardware.** Check it over before you use it on live gear.
+> It **has** been run with real audio in Waves SuperRack Performer v15.15.12 on macOS (48 kHz,
+> 256-sample buffer), over a loopback virtual device rather than a desk. Audio went through the
+> sum, and it was measured rather than listened to: the sum equals the sum of its senders delayed
+> by exactly one block, with 0 of 143744 samples in error, pass-through is bit-exact, send trim
+> and mute come back exact, and a bypassed instance contributes zero without wedging the bus. It
+> **hasn't been run against a real console or used on a show**. **Every claim about SQ behaviour
+> here comes from the reference guide, not from hardware.** Check it over before you use it on
+> live gear.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
 
