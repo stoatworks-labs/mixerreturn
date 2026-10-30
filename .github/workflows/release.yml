@@ -32,7 +32,7 @@ jobs:
           # The inner quotes are load-bearing: this string is pasted into a
           # shell command, and an unquoted ';' separates commands rather than
           # CMake list items.
-          - { name: macos-universal, os: macos-14,         cmake_arch: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"' }
+          - { name: macos-universal, os: macos-15,         cmake_arch: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"' }
     steps:
       - uses: actions/checkout@v4
 
