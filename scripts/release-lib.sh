@@ -34,6 +34,8 @@
 #   rl_init "SRT Router" srt-router 0.1.1 com.stoatworks.srt-router "$outdir"
 #   rl_zip     windows-x86_64 "$stage"
 #   rl_nsis    windows-x86_64 "$stage" --cli          # or --gui SRTRouter.exe
+#                                                     # or --ffgl (Resolume plugin)
+#                                                     # or --vst3 (VST3/CLAP plugin)
 #   rl_targz   linux-x86_64   "$stage"
 #   rl_pkg     macos-arm64    "$stage" --cli          # or --app "SRT Router.app"
 #   rl_dmg     macos-arm64    "$stage"
@@ -548,8 +550,10 @@ rl_nsis_uninstaller() { # rl_nsis_uninstaller <work> <unsection-body> -> prints 
 
   # SilentInstall silent so the stub writes the uninstaller and exits without
   # ever drawing UI — there is nobody in the guest to click Next.
+  # FileFunc for --ffgl, whose uninstall section finds its plugin with GetParent.
   cat >"$work/uninstgen.nsi" <<NSI
 Unicode true
+!include "FileFunc.nsh"
 Name "${RL_NAME}"
 OutFile "${gen}"
 InstallDir "\$TEMP\\${RL_SLUG}-uninstgen"
@@ -600,7 +604,25 @@ PS1
   printf '%s' "$work/Uninstall.exe"
 }
 
-rl_nsis() { # rl_nsis <label> <stagedir> --plain | --cli | --gui <exe>
+# For --vst3: the bundle <path> is, or is inside, out of <bundle...>.
+rl_nsis_bundle() { # rl_nsis_bundle <path> <bundle...> -> prints the bundle
+  local p="$1" b; shift
+  for b in "$@"; do
+    if [[ "$p" == "$b" || "$p" == "$b"/* ]]; then printf '%s' "$b"; return 0; fi
+  done
+  return 1
+}
+
+# For --vst3: the folder a bundle's hosts scan, as NSIS spells it.
+rl_nsis_dest() { # rl_nsis_dest <bundle>
+  if rl_grepi '\.clap$' "$1"; then
+    printf '%s' '$COMMONFILES64\CLAP'
+  else
+    printf '%s' '$COMMONFILES64\VST3'
+  fi
+}
+
+rl_nsis() { # rl_nsis <label> <stagedir> --plain | --cli | --gui <exe> | --ffgl | --vst3
   # RL_EULA (optional, from rl_eula) adds a licence page. Required when the NDI
   # runtime is bundled — that is the condition Vizrt's redistribution grant
   # rests on, so it is not cosmetic.
@@ -614,22 +636,127 @@ rl_nsis() { # rl_nsis <label> <stagedir> --plain | --cli | --gui <exe>
   local nsi="$work/installer.nsi"
   local outfile="$RL_OUT/${RL_FILE_SLUG}-${RL_VERSION}-${label}-setup.exe"
 
+  # --ffgl is a Resolume plugin, and Resolume never reads Program Files: it
+  # loads plugins from the Extra Effects folder in the Documents of whoever
+  # runs it, one per edition (Documents\Resolume Arena\Extra Effects, or
+  # Resolume Avenue's), at startup only. Every FFGL installer up to Slitscan
+  # 0.1.0 was --plain and offered Program Files, so a user who clicked Next got
+  # a plugin Resolume could not see. So this mode installs per user, into
+  # Arena's folder unless only Avenue is there, with the page saying where
+  # Avenue's is.
+  #
+  # $INSTDIR is that shared folder, which every plugin installs into. Only the
+  # DLLs at the top of the stage go in it, because that is where Resolume
+  # looks. The rest (README, notices, the uninstaller) goes in a folder named
+  # after the plugin beside them: put loose in Extra Effects, every plugin's
+  # README.md and Uninstall.exe would overwrite the last one's, and removing
+  # one plugin from Apps would run whichever uninstaller came last.
+  local ffgl=0 pkgdir='$INSTDIR'
+  if [[ "$mode" == "--ffgl" ]]; then
+    ffgl=1
+    pkgdir="\$INSTDIR\\${RL_NAME}"
+  fi
+
+  # --vst3 is an audio plugin. A VST3 host scans one folder, Common
+  # Files\VST3, and a CLAP host Common Files\CLAP. None of them looks in
+  # Program Files\<Name>, which is where every audio plugin installer before
+  # this mode (--plain, up to Zero EQ 0.8.2 and VoiceLevel 0.1.0) left its
+  # bundle. So each bundle goes in its format's folder under its own name and
+  # nothing above it (VST3/Zero EQ.vst3 in the stage becomes Common
+  # Files\VST3\Zero EQ.vst3), and everything else (the standalone, README,
+  # notices) goes in Program Files\<Name> with the uninstaller, as --plain puts
+  # it. A bundle is the outermost *.vst3 or *.clap in the stage, folder or
+  # file: a Windows CLAP is one DLL, and the Zero EQ.vst3 in
+  # Contents\x86_64-win is the inside of a bundle, not another one.
+  #
+  # A JUCE build leaves the VST3's import library and export file (.lib, .exp)
+  # beside the bundle. No host loads them, so they are not installed. The
+  # --plain installers put them, and the bundle, in Program Files\<Name>, so
+  # an upgrade first deletes those copies by name: a host someone pointed at
+  # that folder by hand would otherwise find the plugin twice.
+  local vst3=0
+  if [[ "$mode" == "--vst3" ]]; then
+    vst3=1
+  fi
+
   # Walk the staging tree and emit File/Delete/RMDir lines in the right order.
   # These accumulate as arrays; joining with printf keeps real newlines in the
   # generated script (a "...\n" inside double quotes would be a literal).
-  local -a install_arr=() unfiles_arr=() undirs_arr=()
-  local d f rel frel
-  while IFS= read -r d; do
-    rel="${d#"$stage"}"; rel="${rel#/}"
-    if [[ -n "$rel" ]]; then
-      install_arr+=("  SetOutPath \"\$INSTDIR\\${rel//\//\\}\"")
-    else
-      install_arr+=("  SetOutPath \"\$INSTDIR\"")
+  local -a install_arr=() unfiles_arr=() undirs_arr=() bundles=() legacy_arr=()
+  local d f rel frel b dest brel outpath
+  if (( vst3 )); then
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && bundles+=("$b")
+    done < <(find "$stage" -mindepth 1 \( -iname '*.vst3' -o -iname '*.clap' \) -prune -print | sort)
+    if (( ${#bundles[@]} == 0 )); then
+      echo "rl_nsis --vst3: no .vst3 or .clap in ${stage}, so nothing for a host to load" >&2
+      rm -rf "$work"
+      return 1
     fi
+    # Each file goes under its format's folder, and legacy_arr deletes it from
+    # where --plain put it, $INSTDIR\<its place in the stage>.
+    for b in "${bundles[@]}"; do
+      dest="$(rl_nsis_dest "$b")"
+      if [[ -f "$b" ]]; then
+        install_arr+=("  SetOutPath \"${dest}\"" "  File \"${b}\"")
+        unfiles_arr+=("  Delete \"${dest}\\${b##*/}\"")
+        frel="${b#"$stage"/}"
+        legacy_arr+=("  Delete \"\$INSTDIR\\${frel//\//\\}\"")
+        continue
+      fi
+      while IFS= read -r d; do
+        brel="${d#"${b%/*}"/}"
+        install_arr+=("  SetOutPath \"${dest}\\${brel//\//\\}\"")
+        while IFS= read -r f; do
+          [[ -z "$f" ]] && continue
+          install_arr+=("  File \"${f}\"")
+          brel="${f#"${b%/*}"/}"; frel="${f#"$stage"/}"
+          unfiles_arr+=("  Delete \"${dest}\\${brel//\//\\}\"")
+          legacy_arr+=("  Delete \"\$INSTDIR\\${frel//\//\\}\"")
+        done < <(find "$d" -maxdepth 1 -type f | sort)
+      done < <(find "$b" -type d | sort)
+    done
+  fi
+  if (( ffgl )); then
+    # The uninstaller runs from the plugin's folder, so there $INSTDIR is that
+    # folder and the DLLs are in its parent, $R0.
+    install_arr+=("  SetOutPath \"\$INSTDIR\"")
     while IFS= read -r f; do
       [[ -z "$f" ]] && continue
       install_arr+=("  File \"${f}\"")
+      unfiles_arr+=("  Delete \"\$R0\\${f##*/}\"")
+    done < <(find "$stage" -maxdepth 1 -type f -iname '*.dll' | sort)
+    if (( ${#unfiles_arr[@]} == 0 )); then
+      echo "rl_nsis --ffgl: no .dll at the top of ${stage}, so nothing for Resolume to load" >&2
+      rm -rf "$work"
+      return 1
+    fi
+  fi
+  while IFS= read -r d; do
+    if (( vst3 )) && rl_nsis_bundle "$d" "${bundles[@]}" >/dev/null; then continue; fi
+    rel="${d#"$stage"}"; rel="${rel#/}"
+    if [[ -n "$rel" ]]; then
+      outpath="  SetOutPath \"${pkgdir}\\${rel//\//\\}\""
+    else
+      outpath="  SetOutPath \"${pkgdir}\""
+    fi
+    # --vst3 makes only the folders it puts a file in: a stage's VST3 folder
+    # holds nothing once its bundle and the .lib/.exp are out of it.
+    (( vst3 )) || install_arr+=("$outpath")
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      if (( ffgl )) && [[ -z "$rel" ]] && rl_grepi '\.dll$' "$f"; then continue; fi
       frel="${f#"$stage"/}"
+      if (( vst3 )); then
+        if rl_nsis_bundle "$f" "${bundles[@]}" >/dev/null; then continue; fi
+        if rl_grepi '\.(exp|lib)$' "$f"; then
+          legacy_arr+=("  Delete \"\$INSTDIR\\${frel//\//\\}\"")
+          continue
+        fi
+        [[ -n "$outpath" ]] && install_arr+=("$outpath")
+        outpath=""
+      fi
+      install_arr+=("  File \"${f}\"")
       unfiles_arr+=("  Delete \"\$INSTDIR\\${frel//\//\\}\"")
     done < <(find "$d" -maxdepth 1 -type f | sort)
   done < <(find "$stage" -type d | sort)
@@ -638,11 +765,34 @@ rl_nsis() { # rl_nsis <label> <stagedir> --plain | --cli | --gui <exe>
   while IFS= read -r d; do
     rel="${d#"$stage"}"; rel="${rel#/}"
     [[ -z "$rel" ]] && continue
+    if (( vst3 )); then
+      # A folder of a bundle goes from its format's folder at uninstall, and
+      # from where --plain put it at upgrade; so does the folder the bundle
+      # sat in (VST3, CLAP), which RMDir leaves if anything is still in it.
+      if b=$(rl_nsis_bundle "$d" "${bundles[@]}"); then
+        brel="${d#"${b%/*}"/}"
+        undirs_arr+=("  RMDir \"$(rl_nsis_dest "$b")\\${brel//\//\\}\"")
+        legacy_arr+=("  RMDir \"\$INSTDIR\\${rel//\//\\}\"")
+        continue
+      fi
+      for b in "${bundles[@]}"; do
+        if [[ "$b" == "$d"/* ]]; then
+          legacy_arr+=("  RMDir \"\$INSTDIR\\${rel//\//\\}\"")
+          break
+        fi
+      done
+    fi
     undirs_arr+=("  RMDir \"\$INSTDIR\\${rel//\//\\}\"")
   done < <(find "$stage" -mindepth 1 -type d | sort -r)
 
   local install_lines uninstall_files uninstall_dirs
   install_lines=$(printf '%s\n' "${install_arr[@]}")
+  if (( vst3 )); then
+    install_lines="$(printf '%s\n' \
+      "  ; Where the --plain installers put the plug-in, which no host scans." \
+      "${legacy_arr[@]}")
+${install_lines}"
+  fi
   uninstall_files=$( ((${#unfiles_arr[@]})) && printf '%s\n' "${unfiles_arr[@]}" || true )
   uninstall_dirs=$(  ((${#undirs_arr[@]}))  && printf '%s\n' "${undirs_arr[@]}"  || true )
 
@@ -677,6 +827,13 @@ SC
     # Installs files, an uninstaller and the Add/Remove Programs keys, and
     # touches nothing else. This is what a plugin wants.
     :
+  elif [[ "$mode" == "--ffgl" ]]; then
+    # --plain's restraint, in the folder Resolume reads: see the top of rl_nsis.
+    :
+  elif [[ "$mode" == "--vst3" ]]; then
+    # --plain's restraint, with the bundles where hosts scan: see the top of
+    # rl_nsis.
+    :
   elif [[ "$mode" == "--cli" ]]; then
     # CLI: put the install dir on the machine PATH via EnvVarUpdate-lite.
     pathblock=$(cat <<'SC'
@@ -710,8 +867,56 @@ SC
 SC
 )
   else
-    echo "rl_nsis: unknown mode '${mode}' (expected --cli, --gui <exe>, or --plain)" >&2
+    echo "rl_nsis: unknown mode '${mode}' (expected --cli, --gui <exe>, --plain, --ffgl or --vst3)" >&2
     return 1
+  fi
+
+  # Who it installs for. Every mode but --ffgl is per machine, in Program
+  # Files, behind a UAC prompt (--vst3 could be nothing else: Common Files is
+  # the machine's). --ffgl is per user, so it needs no admin at all: the
+  # folder is in the user's Documents, the keys go in HKCU, and Apps lists a
+  # per-user uninstall entry like any other.
+  local instdir="\$PROGRAMFILES64\\${RL_NAME}" regroot=HKLM execlevel=admin
+  local ctxline="  SetShellVarContext all" includes="" oninit="" dirtext="" unparent=""
+  local unstring="\$INSTDIR\\Uninstall.exe"
+  if (( ffgl )); then
+    instdir="\$DOCUMENTS\\Resolume Arena\\Extra Effects"
+    regroot=HKCU; execlevel=user
+    ctxline="  SetShellVarContext current"
+    includes='!include "FileFunc.nsh"'
+    # Quoted, as Windows wants an UninstallString with spaces in it to be:
+    # this one always has them.
+    unstring="\$\\\"${pkgdir}\\Uninstall.exe\$\\\""
+    unparent="  \${GetParent} \"\$INSTDIR\" \$R0"
+    # No apostrophes in either string: see the note in the --cli PATH block.
+    dirtext="!define MUI_DIRECTORYPAGE_TEXT_TOP \"${RL_NAME} goes in the Extra Effects folder of the Resolume you use: Documents\\Resolume Arena\\Extra Effects for Arena, Documents\\Resolume Avenue\\Extra Effects for Avenue. Resolume reads it only when it starts, so quit Resolume first.\"
+!define MUI_DIRECTORYPAGE_TEXT_DESTINATION \"Extra Effects folder\""
+    # Avenue keeps a folder of its own. Where only Avenue has ever run, start
+    # there. A folder from an earlier install, or a /D= on the command line,
+    # is not the stock default and is left alone.
+    oninit='Function .onInit
+  ${If} $INSTDIR == "$DOCUMENTS\Resolume Arena\Extra Effects"
+  ${AndIfNot} ${FileExists} "$DOCUMENTS\Resolume Arena\*.*"
+  ${AndIf} ${FileExists} "$DOCUMENTS\Resolume Avenue\*.*"
+    StrCpy $INSTDIR "$DOCUMENTS\Resolume Avenue\Extra Effects"
+  ${EndIf}
+FunctionEnd'
+  elif (( vst3 )); then
+    unstring="\$\\\"\$INSTDIR\\Uninstall.exe\$\\\""
+    # The page picks the folder for everything but the plug-in, so it says
+    # where the plug-in goes. No apostrophes: see the --cli PATH block.
+    local hasvst3=0 hasclap=0 where=""
+    for b in "${bundles[@]}"; do
+      if rl_grepi '\.clap$' "$b"; then hasclap=1; else hasvst3=1; fi
+    done
+    if (( hasvst3 && hasclap )); then
+      where="the VST3 in C:\\Program Files\\Common Files\\VST3 and the CLAP in C:\\Program Files\\Common Files\\CLAP"
+    elif (( hasclap )); then
+      where="C:\\Program Files\\Common Files\\CLAP"
+    else
+      where="C:\\Program Files\\Common Files\\VST3"
+    fi
+    dirtext="!define MUI_DIRECTORYPAGE_TEXT_TOP \"${RL_NAME} goes where hosts look for it, ${where}, whichever folder you choose here. The folder below gets everything else, the uninstaller included. Quit any host that has ${RL_NAME} loaded first.\""
   fi
 
   # The uninstall section is assembled separately because the signed-uninstaller
@@ -722,14 +927,15 @@ SC
   unsection=$(cat <<UNS
 Section "Uninstall"
   SetRegView 64
-  SetShellVarContext all
+${ctxline}
+${unparent}
 ${unshortcuts}
 ${uninstall_files}
   Delete "\$INSTDIR\\Uninstall.exe"
 ${uninstall_dirs}
   RMDir "\$INSTDIR"
-  DeleteRegKey HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}"
-  DeleteRegKey HKLM "Software\\${RL_PUBLISHER}\\${RL_NAME}"
+  DeleteRegKey ${regroot} "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}"
+  DeleteRegKey ${regroot} "Software\\${RL_PUBLISHER}\\${RL_NAME}"
 SectionEnd
 UNS
 )
@@ -738,7 +944,7 @@ UNS
   # WriteUninstaller overwrites the freshly generated one — WriteUninstaller
   # itself has to stay, because makensis refuses to compile an Uninstall
   # section without it.
-  local writeuninst="  WriteUninstaller \"\$INSTDIR\\Uninstall.exe\""
+  local writeuninst="  WriteUninstaller \"${pkgdir}\\Uninstall.exe\""
   if [[ "${RL_SIGN_UNINSTALLER:-0}" == "1" ]] && rl_sign_ready; then
     local signedun
     if signedun=$(rl_nsis_uninstaller "$work" "$unsection"); then
@@ -752,12 +958,13 @@ Unicode true
 !include "MUI2.nsh"
 !include "WinMessages.nsh"
 !include "LogicLib.nsh"
+${includes}
 
 Name "${RL_NAME}"
 OutFile "${outfile}"
-InstallDir "\$PROGRAMFILES64\\${RL_NAME}"
-InstallDirRegKey HKLM "Software\\${RL_PUBLISHER}\\${RL_NAME}" "InstallDir"
-RequestExecutionLevel admin
+InstallDir "${instdir}"
+InstallDirRegKey ${regroot} "Software\\${RL_PUBLISHER}\\${RL_NAME}" "InstallDir"
+RequestExecutionLevel ${execlevel}
 SetCompressor /SOLID lzma
 
 VIProductVersion "$(rl_numver)"
@@ -770,6 +977,7 @@ VIAddVersionKey "LegalCopyright"  "${RL_PUBLISHER}"
 
 !define MUI_ABORTWARNING
 ${licpage}
+${dirtext}
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -805,26 +1013,29 @@ Function StrStr
   Exch \$R1
 FunctionEnd
 
+${oninit}
+
 Section "Install"
   ; The NSIS stub is 32-bit, so without this the uninstall keys are redirected
   ; into WOW6432Node and Add/Remove Programs never shows the entry.
   SetRegView 64
-  ; This installs per-machine into Program Files, so shortcuts belong in the
-  ; all-users Start Menu. Without this \$SMPROGRAMS/\$DESKTOP point at whichever
-  ; account ran the installer — which under a silent/service install is
-  ; SYSTEM, and the shortcuts vanish into a profile nobody ever sees.
-  SetShellVarContext all
+  ; Per machine (every mode but --ffgl), shortcuts belong in the all-users
+  ; Start Menu. Without this \$SMPROGRAMS/\$DESKTOP point at whichever account
+  ; ran the installer — which under a silent/service install is SYSTEM, and
+  ; the shortcuts vanish into a profile nobody ever sees. --ffgl is per user,
+  ; and \$DOCUMENTS has to be the Documents of the user who runs Resolume.
+${ctxline}
 ${install_lines}
-  SetOutPath "\$INSTDIR"
+  SetOutPath "${pkgdir}"
 ${shortcuts}
 ${pathblock}
 ${writeuninst}
-  WriteRegStr HKLM "Software\\${RL_PUBLISHER}\\${RL_NAME}" "InstallDir" "\$INSTDIR"
-  WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "DisplayName"     "${RL_NAME}"
-  WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "DisplayVersion"  "${RL_VERSION}"
-  WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "Publisher"       "${RL_PUBLISHER}"
-  WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "URLInfoAbout"    "${RL_URL}"
-  WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "UninstallString" "\$INSTDIR\\Uninstall.exe"
+  WriteRegStr ${regroot} "Software\\${RL_PUBLISHER}\\${RL_NAME}" "InstallDir" "\$INSTDIR"
+  WriteRegStr ${regroot} "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "DisplayName"     "${RL_NAME}"
+  WriteRegStr ${regroot} "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "DisplayVersion"  "${RL_VERSION}"
+  WriteRegStr ${regroot} "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "Publisher"       "${RL_PUBLISHER}"
+  WriteRegStr ${regroot} "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "URLInfoAbout"    "${RL_URL}"
+  WriteRegStr ${regroot} "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${RL_SLUG}" "UninstallString" "${unstring}"
 SectionEnd
 
 ${unsection}

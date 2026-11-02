@@ -201,6 +201,12 @@ You don't need to unquarantine anything. A locally built or `.zip`-extracted bun
 `com.apple.quarantine` attribute here, and the plugin loads and runs in SuperRack with an ad-hoc
 signature, so Developer ID signing and notarisation aren't needed for it to be hosted.
 
+**On Windows**, the installer puts the VST3 in `C:\Program Files\Common Files\VST3\`, the folder
+every VST3 host scans, and the standalone in `C:\Program Files\MixerReturn\`. From the `.zip`,
+copy `VST3\MixerReturn.vst3` into that VST3 folder yourself. The v0.4.2 installer and older put
+the VST3 in `C:\Program Files\MixerReturn\VST3\` instead, where no host looks: move it across by
+hand, or run a newer installer, which clears that copy away.
+
 ---
 
 ## Where this is going
