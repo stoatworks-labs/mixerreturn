@@ -14,6 +14,8 @@
 A plugin that bolts a Dugan Automixer onto a console that hasn't got one. It runs post-fader,
 and it doesn't cost you an insert slot or a second channel strip per mic.
 
+The [project page](https://stoatworks-labs.com/software/mixerreturn/) has the downloads and the [user guide](https://stoatworks-labs.com/software/mixerreturn/guide/).
+
 <!-- downloads:start -->
 
 ## Download
